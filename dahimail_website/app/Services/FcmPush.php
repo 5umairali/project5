@@ -192,14 +192,16 @@ class FcmPush
 
     // ───────────────────────── visible notification ─────────────────────────
 
-    public function sendToUser(User $user, string $title, string $body = '', array $data = [], array $opts = []): void
+    /** Provider acceptance means the recipient device/token accepted the message for delivery. */
+    public function sendToUser(User $user, string $title, string $body = '', array $data = [], array $opts = []): bool
     {
-        if (!$this->enabled()) return;
+        if (!$this->enabled()) return false;
         $devices = $this->devices($user->id);
-        if (!$devices) return;
+        if (!$devices) return false;
+        $accepted = false;
         try {
             $auth = $this->auth();
-            if (!$auth) return;
+            if (!$auth) return false;
             $data = $this->strings(['recipient_user_id' => $user->id] + \App\Support\PushPresentation::replyTarget($data) + $data);
             [$label, $icon] = \App\Support\PushPresentation::for($data);
             $body = mb_strcut(\App\Support\PushPresentation::body($data, $body), 0, 600, 'UTF-8');
@@ -245,7 +247,8 @@ class FcmPush
                             ];
                         }
                     }
-                    $this->post($auth, $message, $d->token);
+                    $result = $this->post($auth, $message, $d->token);
+                    $accepted = $accepted || (($result['accepted'] ?? false) === true);
                 } catch (\Throwable $e) {
                     $this->failure($e, 'device_delivery');
                 }
@@ -253,6 +256,7 @@ class FcmPush
         } catch (\Throwable $e) {
             $this->failure($e, 'notification');
         }
+        return $accepted;
     }
 
     // ───────────────────────── incoming call ─────────────────────────

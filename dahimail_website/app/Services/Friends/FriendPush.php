@@ -10,8 +10,8 @@ use Illuminate\Support\Facades\Log;
  * The events of the Friends feature that must reach a phone / browser that is NOT looking at the app:
  * incoming call, call cancelled, missed call, new chat message.
  *
- * Every push is sent AFTER the HTTP response was delivered (dispatch()->afterResponse()), so starting a call or sending
- * a message is never slowed down by Google / Apple – and never fails because of them.
+ * Pushes are sent in the request that creates the event. They must not be put into the database queue: shared-host
+ * deployments often do not have a worker running, and a queued call notification is useless after the ring window ends.
  */
 class FriendPush
 {
@@ -25,11 +25,11 @@ class FriendPush
     private static function later(callable $fn): void
     {
         try {
-            dispatch(function () use ($fn) {
-                try { $fn(); } catch (\Throwable $e) { Log::warning('push failed: ' . $e->getMessage()); }
-            })->afterResponse();
+            // Do not use dispatch()->afterResponse() here. With QUEUE_CONNECTION=database it only inserts a job;
+            // without a continuously running worker the job remains pending and the phone never rings/notifies.
+            $fn();
         } catch (\Throwable $e) {
-            try { $fn(); } catch (\Throwable $e2) { Log::warning('push failed: ' . $e2->getMessage()); }
+            Log::warning('push failed: ' . $e->getMessage());
         }
     }
 
@@ -104,9 +104,15 @@ class FriendPush
                 $kind === 'file' => '📎 ' . ($fileName !== '' ? $fileName : 'File'),
                 default => mb_strcut($body, 0, 600, 'UTF-8'),
             };
-            app(FcmPush::class)->sendToUser($rcpt, $sender->name, $text,
+            $accepted = app(FcmPush::class)->sendToUser($rcpt, $sender->name, $text,
                 ['type' => 'chat', 'sender_name' => $sender->name, 'sender_avatar' => self::avatar($sender), 'from_id' => $from, 'message_id' => $id, 'action_url' => $sender->chatUrl()],
                 ['tag' => 'chat-' . $from, 'thread' => 'chat-' . $from]);
+            // FCM has accepted the push for at least one registered recipient device.
+            // This is the correct point for the two grey delivery ticks; read_at is
+            // still reserved for the recipient opening the conversation.
+            if ($accepted) {
+                \Illuminate\Support\Facades\DB::table('friend_messages')->where('id', $id)->whereNull('delivered_at')->update(['delivered_at' => now()]);
+            }
         });
     }
 }

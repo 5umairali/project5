@@ -227,11 +227,14 @@ class MeetingService
     {
         $host = User::find($m->host_id);
         $start = $m->scheduled_at ? Carbon::parse($m->scheduled_at, 'UTC') : null;
+        $callAudioOnly = $m->kind === 'call'
+            ? (bool) DB::table('friend_calls')->where('meeting_code', $m->code)->where('group_invite', 0)->value('audio_only')
+            : false;
         return [
             'scheduled_at' => $start?->toIso8601String(), 'duration' => (int) $m->duration_min,
             'ends_at' => $start ? $start->copy()->addMinutes((int) $m->duration_min)->toIso8601String() : null,
             'started_at' => $m->started_at ? Carbon::parse($m->started_at, 'UTC')->toIso8601String() : null,
-            'code' => $m->code, 'pretty' => self::pretty($m->code), 'title' => $m->title, 'kind' => $m->kind, 'status' => $m->status, 'locked' => (bool) $m->locked,
+            'code' => $m->code, 'pretty' => self::pretty($m->code), 'title' => $m->title, 'kind' => $m->kind, 'audio_only' => $callAudioOnly, 'status' => $m->status, 'locked' => (bool) $m->locked,
             'waiting_room' => (bool) $m->waiting_room, 'mute_on_entry' => (bool) $m->mute_on_entry, 'host_name' => $host?->name, 'url' => url('/meet/' . $m->code),
         ];
     }
