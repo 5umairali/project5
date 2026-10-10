@@ -39,6 +39,10 @@ class NotifyService with WidgetsBindingObserver {
   /// Token registered and server push configured. Provider/device delivery still depends on connectivity and permissions.
   bool pushActive = false;
 
+  // Polling can observe the same chat immediately after its foreground push.
+  final Set<String> _shownChatMessages = {};
+  bool hasShownChatMessage(int id) => _shownChatMessages.contains('$id');
+
   /// Incremented when the user taps a notification – the shell opens the notification list.
   final ValueNotifier<int> tapped = ValueNotifier(0);
   Map<String, dynamic>? pendingNotification;
@@ -162,18 +166,20 @@ class NotifyService with WidgetsBindingObserver {
 
   bool _catOn(String c, AppPrefs p) => switch (c) { 'messages' => p.notifMessages, 'billing' => p.notifBilling, _ => p.notifActivity };
 
-  Future<void> show({required int id, required String title, required String body, required String category, required AppPrefs prefs, Map? notification}) async {
+  Future<void> show({required int id, required String title, required String body, required String category, required AppPrefs prefs, Map? notification, bool foreground = false}) async {
     if (!_ready) await init();
     final presentation = notification == null ? null : NotificationPresentation.from(notification);
     final sender = notification == null ? '' : '${notification['sender_name'] ?? ''}'.trim();
     final displayTitle = sender.isEmpty ? title : sender;
     final displayBody = notification == null ? body : NotificationPresentation.systemBody(notification, body);
     final label = notification == null ? null : NotificationPresentation.systemLabel(notification);
+    final playSound = !foreground || prefs.inAppSound;
     if (defaultTargetPlatform == TargetPlatform.android && notification != null) {
       try {
         final shown = await const MethodChannel('com.dahify.dahimail/device').invokeMethod<bool>('showSystemAlert', {
           ...notification, 'title': title, 'body': displayBody, 'category_label': label,
           'notification_id': notification['notification_id'] ?? notification['id'] ?? '$id',
+          'play_sound': playSound,
         });
         if (shown == true) return;
       } catch (_) { /* Keep the local notification fallback available. */ }
@@ -181,7 +187,7 @@ class NotifyService with WidgetsBindingObserver {
     final avatar = await _avatarBitmap(notification == null ? null : NotificationPresentation.avatar(notification));
     final (name, desc) = _cats[category] ?? _cats['activity']!;
     // Android channel sound/vibration cannot change after creation → one channel per combination.
-    final channelId = 'dm_default_v3_${category}_${prefs.notifVibrate ? 1 : 0}';
+    final channelId = 'dm_default_v3_${category}_${prefs.notifVibrate ? 1 : 0}${playSound ? '' : '_silent'}';
     final details = NotificationDetails(
       android: AndroidNotificationDetails(
         channelId,
@@ -189,7 +195,7 @@ class NotifyService with WidgetsBindingObserver {
         channelDescription: desc,
         importance: Importance.high,
         priority: Priority.high,
-        playSound: true,
+        playSound: playSound,
         enableVibration: prefs.notifVibrate,
         largeIcon: avatar,
         icon: 'ic_stat_notify',
@@ -204,7 +210,7 @@ class NotifyService with WidgetsBindingObserver {
         styleInformation: BigTextStyleInformation(displayBody),
         groupKey: '${AppConfig.urlScheme}.${presentation?.kind ?? category}',
       ),
-      iOS: DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentBanner: true, presentList: true, presentSound: true, subtitle: notification == null ? null : displayTitle, threadIdentifier: presentation?.kind, categoryIdentifier: notification != null && NotificationTarget.from(notification) != null ? 'MESSAGE_REPLY' : 'MESSAGE_VIEW'),
+      iOS: DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentBanner: true, presentList: true, presentSound: playSound, subtitle: notification == null ? null : displayTitle, threadIdentifier: presentation?.kind, categoryIdentifier: notification != null && NotificationTarget.from(notification) != null ? 'MESSAGE_REPLY' : 'MESSAGE_VIEW'),
     );
     await _plugin.show(id, defaultTargetPlatform == TargetPlatform.iOS ? (label ?? displayTitle) : displayTitle, displayBody, details, payload: notification == null ? category : jsonEncode(notification));
   }
@@ -256,12 +262,12 @@ class NotifyService with WidgetsBindingObserver {
     final seen = await storage.getStringList('push_shown_ids') ?? [];
     if (seen.contains(key)) return;
     final id = key.codeUnits.fold<int>(0, (hash, c) => ((hash * 31) + c) & 0x7fffffff);
-    if (foreground) {
-      // Chat polling owns the in-app chat banner and its direct thread action.
-      if (data['type'] != 'chat') showBanner(data);
-      if (data['type'] != 'chat' && prefs.inAppSound) SoundPlayer.play(prefs.soundId);
-    } else {
-      await show(id: id, title: title, body: '${data['body'] ?? ''}', category: category, prefs: prefs, notification: data);
+    // Firebase foreground presentation is disabled, so every visible push must
+    // reach the system notification path even before a Scaffold is available.
+    await show(id: id, title: title, body: '${data['body'] ?? ''}', category: category, prefs: prefs, notification: data, foreground: foreground);
+    if (data['type'] == 'chat' && data['message_id'] != null) {
+      _shownChatMessages.add('${data['message_id']}');
+      if (_shownChatMessages.length > 100) _shownChatMessages.remove(_shownChatMessages.first);
     }
     await storage.setStringList('push_shown_ids', [...seen.skip(seen.length > 99 ? seen.length - 99 : 0), key]);
     if (data['notification_id'] != null) await prefs.rememberShown(['${data['notification_id']}']);

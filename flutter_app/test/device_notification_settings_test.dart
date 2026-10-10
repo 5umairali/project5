@@ -12,6 +12,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dahimail/core/prefs.dart';
+import 'package:dahimail/core/push_receipt.dart';
 import 'package:dahimail/core/notification_presentation.dart';
 import 'package:dahimail/screens/app_settings_screens.dart';
 
@@ -89,7 +90,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Check connection'), findsOneWidget);
+    expect(find.text('Send test notification'), findsOneWidget);
     expect(find.text('No remote push received yet.'), findsOneWidget);
+    await PushReceipt.received();
+    await tester.pumpAndSettle();
+    expect(find.text('No remote push received yet.'), findsNothing);
+    expect(find.textContaining('Last remote push:'), findsOneWidget);
     final settingsScroll = find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first;
     await tester.scrollUntilVisible(find.text('Background battery settings'), 180, scrollable: settingsScroll);
     await tester.pumpAndSettle();

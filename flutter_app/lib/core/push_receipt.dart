@@ -1,13 +1,16 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 
 /// Cross-isolate receipt evidence; stores no sender, message content or device token.
 class PushReceipt {
+  static final changes = ValueNotifier<int>(0);
   static final _storage = SharedPreferencesAsync();
   static Future<void> received() async {
     try {
       await _storage.setString('last_remote_push_at', DateTime.now().toUtc().toIso8601String());
     } catch (_) {}
+    changes.value++;
   }
   static Future<String?> lastReceived() async {
     String? recorded;

@@ -208,7 +208,7 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
             return PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
 
-        private fun channel(context: Context, calls: Boolean, alertId: String = ALERT_CHANNEL, vibrate: Boolean = true) {
+        private fun channel(context: Context, calls: Boolean, alertId: String = ALERT_CHANNEL, vibrate: Boolean = true, playSound: Boolean = true) {
             if (Build.VERSION.SDK_INT < 26) return
             val id = if (calls && alertId == ALERT_CHANNEL) CALL_CHANNEL else alertId
             val manager = context.getSystemService(NotificationManager::class.java)
@@ -219,7 +219,7 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
                 lightColor = Color.rgb(22, 163, 74)
                 setShowBadge(true)
                 lockscreenVisibility = if (calls) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_PRIVATE
-                setSound(if (calls && id == CALL_CHANNEL) null else android.media.RingtoneManager.getDefaultUri(if (calls) android.media.RingtoneManager.TYPE_RINGTONE else android.media.RingtoneManager.TYPE_NOTIFICATION),
+                setSound(if (!playSound || (calls && id == CALL_CHANNEL)) null else android.media.RingtoneManager.getDefaultUri(if (calls) android.media.RingtoneManager.TYPE_RINGTONE else android.media.RingtoneManager.TYPE_NOTIFICATION),
                     AudioAttributes.Builder().setUsage(if (calls) AudioAttributes.USAGE_NOTIFICATION_RINGTONE else AudioAttributes.USAGE_NOTIFICATION).build())
             }
             manager.createNotificationChannel(channel)
@@ -347,10 +347,10 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
                 val end = prefs.getLong("flutter.q_end", 420).toInt()
                 if (if (start <= end) minute in start until end else minute >= start || minute < end) { recordResult(context, "quiet_hours"); return true }
             }
-            val sound = "default" // Follow the phone's current notification sound.
+            val sound = if (data["play_sound"] in listOf("false", "0")) "silent" else "default"
             val vibrate = prefs.getBoolean("flutter.n_vibrate", true)
             val channelId = "${ALERT_CHANNEL}_${category}_${sound}_$vibrate"
-            channel(context, false, channelId, vibrate)
+            channel(context, false, channelId, vibrate, sound == "default")
             if (!canPost(context, channelId)) return true
             val key = data["notification_id"].takeUnless { it.isNullOrBlank() }
                 ?: data["message_id"].takeUnless { it.isNullOrBlank() } ?: data["google.message_id"] ?: return false

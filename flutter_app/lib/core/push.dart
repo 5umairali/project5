@@ -52,6 +52,10 @@ class PushService with WidgetsBindingObserver {
 
   Timer? _retry;
   bool _registering = false, _registerAgain = false;
+  bool _checking = false;
+  String? _checkedToken, _checkedSession;
+  PushConnectionStatus? _checkedStatus;
+  bool _checkAccepted = false;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -80,13 +84,19 @@ class PushService with WidgetsBindingObserver {
         }
         CallManager.I.pollNow();
       } else {
+        final readingChat = type == 'chat' && NotifyService.I.inForeground &&
+            CallManager.I.openChatId != null &&
+            '${CallManager.I.openChatId}' == '${m.data['from_id']}';
+        if (m.data['dm_native_shown'] != '1' && !readingChat) {
+          try { await NotifyService.I.showRemote({
+            ...m.data,
+            if (m.data['title'] == null && m.notification?.title != null) 'title': m.notification!.title!,
+            if (m.data['body'] == null && m.notification?.body != null) 'body': m.notification!.body!,
+          }, messageId: m.messageId, foreground: NotifyService.I.inForeground); } catch (_) {}
+        }
+        // Let the notification presenter record the message before polling can
+        // announce it again. Open conversations still refresh immediately.
         if (type == 'chat' || type == 'missed_call') CallManager.I.pollNow();
-        if (m.data['dm_native_shown'] == '1') return;
-        try { await NotifyService.I.showRemote({
-          ...m.data,
-          if (m.data['title'] == null && m.notification?.title != null) 'title': m.notification!.title!,
-          if (m.data['body'] == null && m.notification?.body != null) 'body': m.notification!.body!,
-        }, messageId: m.messageId, foreground: NotifyService.I.inForeground); } catch (_) {}
       }
     });
     messaging.onTokenRefresh.listen((token) {
@@ -104,7 +114,7 @@ class PushService with WidgetsBindingObserver {
   Future<void> register(Api api) async {
     if (kIsWeb || (defaultTargetPlatform != TargetPlatform.iOS && defaultTargetPlatform != TargetPlatform.android)) return;
     _api = api;
-    if (_registering) { _registerAgain = true; return; }
+    if (_registering || _checking) { _registerAgain = true; return; }
     _registering = true;
     _retry?.cancel();
     final sessionToken = api.session.token;
@@ -128,8 +138,19 @@ class PushService with WidgetsBindingObserver {
       final result = await _send(api, token);
       if (_api == api && api.session.token == sessionToken) {
         if (_refreshedToken == token) _refreshedToken = null;
-        status.value = result;
-        NotifyService.I.pushActive = result.registered;
+        // Saving a token again (especially on resume) is not a new provider
+        // check and must not erase Google's rejection or imply recovery.
+        final keepCheck = result.registered && _checkedToken == token &&
+            _checkedSession == sessionToken && _checkedStatus != null;
+        if (keepCheck) {
+          status.value = PushConnectionStatus(_checkedStatus!.code,
+            registered: result.registered, voipConfigured: result.voipConfigured,
+            needsMigration: result.needsMigration);
+        } else {
+          _checkedStatus = null;
+          status.value = result;
+        }
+        NotifyService.I.pushActive = result.registered && (!keepCheck || _checkAccepted);
       }
     } catch (_) {
       if (_api == api && api.session.token == sessionToken) {
@@ -173,11 +194,13 @@ class PushService with WidgetsBindingObserver {
     return PushConnectionStatus.fromRegistration(response);
   }
 
-  /// Explicit user check: verifies only this signed-in phone, without sending an alert.
-  Future<void> checkConnection(Api api) async {
-    if (_registering || status.value.busy) return;
+  /// Provider validation by default. A real delivery test is explicit and is
+  /// sent only to the authenticated phone through the existing server endpoint.
+  Future<void> checkConnection(Api api, {bool sendTest = false}) async {
+    if (_registering || _checking || status.value.busy) return;
     if (status.value.code == 'UNREGISTERED') {
       try { await FirebaseMessaging.instance.deleteToken().timeout(_firebaseTimeout); } catch (_) {}
+      _refreshedToken = null;
     }
     await register(api);
     // Older websites save the token without returning push configuration fields.
@@ -185,19 +208,42 @@ class PushService with WidgetsBindingObserver {
     if (_token == null || (!status.value.registered && status.value.code != 'server_status_unknown')) return;
     final previous = status.value;
     final sessionToken = api.session.token;
-    status.value = PushConnectionStatus('checking', registered: previous.registered, busy: true);
+    final checkedToken = _token;
+    _checking = true;
+    _retry?.cancel();
+    status.value = PushConnectionStatus(sendTest ? 'sending_test' : 'checking', registered: previous.registered, busy: true);
     try {
-      final response = await api.post('me/devices/check-push', {'token': _token});
+      final response = await api.post('me/devices/check-push', {
+        'token': checkedToken, if (sendTest) 'send_test': true,
+      });
       if (_api != api || api.session.token != sessionToken) return;
       final accepted = response['accepted'] == true;
-      status.value = PushConnectionStatus('${response['code'] ?? 'check_unavailable'}',
+      final code = sendTest && accepted
+          ? (response['test_sent'] == true ? 'test_sent' : 'test_unavailable')
+          : '${response['code'] ?? 'check_unavailable'}';
+      status.value = PushConnectionStatus(code,
         registered: previous.registered || accepted, voipConfigured: previous.voipConfigured, needsMigration: previous.needsMigration);
+      _checkedToken = checkedToken;
+      _checkedSession = sessionToken;
+      _checkedStatus = status.value;
+      _checkAccepted = accepted;
       NotifyService.I.pushActive = accepted;
       if (accepted) _retry?.cancel();
     } catch (_) {
       if (_api == api && api.session.token == sessionToken) {
         status.value = PushConnectionStatus('check_unavailable',
           registered: previous.registered, voipConfigured: previous.voipConfigured, needsMigration: previous.needsMigration);
+        _checkedToken = checkedToken;
+        _checkedSession = sessionToken;
+        _checkedStatus = status.value;
+        _checkAccepted = false;
+        NotifyService.I.pushActive = false;
+      }
+    } finally {
+      _checking = false;
+      if (_api != null && _registerAgain) {
+        _registerAgain = false;
+        _retry = Timer(Duration.zero, () { if (_api != null) register(_api!); });
       }
     }
   }
@@ -212,6 +258,10 @@ class PushService with WidgetsBindingObserver {
     _api = null;
     _refreshedToken = null;
     _registerAgain = false;
+    _checkedToken = null;
+    _checkedSession = null;
+    _checkedStatus = null;
+    _checkAccepted = false;
     if (t == null) return;
     try { await (api ?? registeredApi)?.post('me/devices/remove', {'token': t}); } catch (_) {}
     _token = null;

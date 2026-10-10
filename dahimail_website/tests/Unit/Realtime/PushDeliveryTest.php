@@ -310,6 +310,20 @@ test('new Android builds get one native alert payload with category identity and
     expect($sent[1])->toHaveKey('notification'); // Older clients still receive an OS alert.
 });
 
+test('the shipped Android version selects native delivery for every ordinary alert category', function () {
+    preg_match('/^version:\s*(\S+)/m', file_get_contents(base_path('../flutter_app/pubspec.yaml')), $version);
+    DB::statement('ALTER TABLE device_tokens ADD COLUMN app_version TEXT');
+    DB::table('device_tokens')->update(['app_version' => $version[1]]);
+    Http::fake(['*' => Http::response(['name' => 'accepted'])]);
+    foreach (['chat', 'email_received', 'friend_request', 'friend_accepted', 'meeting_invited', 'notification'] as $type) {
+        app(FcmPush::class)->sendToUser($this->user, 'Alice Example', 'New update', ['type' => $type]);
+    }
+    Http::assertSentCount(12);
+    Http::assertNotSent(fn ($request) => isset($request['message']['notification'])
+        || ($request['message']['data']['notification_layout'] ?? null) !== 'v2'
+        || ($request['message']['android']['priority'] ?? null) !== 'HIGH');
+});
+
 test('only incoming message notifications expose a reply target', function () {
     expect(App\Support\PushPresentation::replyTarget(['type' => 'email_received', 'action_url' => '/inbox?cid=7']))->toBe(['reply_kind' => 'conversation', 'reply_id' => '7']);
     foreach (['missed_call', 'email_failed', 'friend_request'] as $type) {
@@ -433,3 +447,39 @@ test('real test cannot target another users device or claim rejected delivery', 
     }
     Http::assertNothingSent();
 });
+
+// Exercise actual event hooks through fake HTTP, without mocking the push service.
+test('stored app events and saved chat reach recipient devices', function (string $type, bool $staleEventCache) {
+    if ($staleEventCache) {
+        // Reproduce a deployed event cache generated before the push listener existed.
+        Illuminate\Support\Facades\Event::forget(Illuminate\Notifications\Events\NotificationSent::class);
+        app()->getProvider(App\Providers\AppServiceProvider::class)->boot();
+    }
+    DB::unprepared(file_get_contents(base_path('tests/Fixtures/realtime.sqlite.sql')));
+    DB::statement('CREATE TABLE notifications (id TEXT PRIMARY KEY, type TEXT, notifiable_type TEXT, notifiable_id INTEGER, data TEXT, read_at TEXT, created_at TEXT, updated_at TEXT)');
+    foreach ([1 => 'Recipient', 2 => 'Sender'] as $id => $name) {
+        DB::table('users')->insert(['id' => $id, 'uuid' => 'synthetic-'.$id, 'name' => $name, 'email' => $id.'@example.test', 'notification_preferences' => '{}']);
+    }
+    Http::fake(['fcm.googleapis.com/*' => Http::response(['name' => 'synthetic-delivery'], 200)]);
+    if ($type === 'chat') {
+        DB::statement('CREATE TABLE friend_requests (id INTEGER PRIMARY KEY, requester_id INTEGER, addressee_id INTEGER, status TEXT, unfriended_at TEXT)');
+        DB::table('friend_requests')->insert(['requester_id' => 2, 'addressee_id' => 1, 'status' => 'accepted']);
+        [$sent] = app(App\Services\Friends\FriendChatService::class)->send(User::findOrFail(2), 1, 'Synthetic chat', null);
+        expect($sent)->toBeTrue();
+        $id = DB::table('friend_messages')->value('id');
+        app()->terminate();
+    } else {
+        $notification = match ($type) {
+            'friend_request' => App\Notifications\FriendNotification::request('Sender'),
+            'friend_accepted' => App\Notifications\FriendNotification::accepted('Sender'),
+            default => new App\Notifications\InAppNotification('Synthetic alert', 'Synthetic body', '/inbox', type: $type),
+        };
+        User::findOrFail(1)->notify($notification);
+        expect(DB::table('notifications')->count())->toBe(1);
+        $id = DB::table('notifications')->value('id');
+    }
+    Http::assertSentCount(2);
+    Http::assertSent(fn ($request) => $request['message']['data']['type'] === $type
+        && $request['message']['data']['recipient_user_id'] === '1'
+        && $request['message']['data'][$type === 'chat' ? 'message_id' : 'notification_id'] === (string) $id);
+})->with(['chat', 'friend_request', 'friend_accepted', 'email_received', 'email_sent', 'workflow'])->with([false, true]);

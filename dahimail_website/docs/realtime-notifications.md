@@ -1,5 +1,64 @@
 # Realtime updates and device notifications
 
+## Delivery diagnostics update: 1.0.10+11
+
+“This phone is saved on the website” means registration was stored. It does not
+prove Google accepted a push. The app now retains the most recent provider check
+for the current token/session when registering again on resume. A rejected check
+keeps the polling fallback enabled until another provider check succeeds; saving
+the same token cannot turn a rejection into a successful delivery status.
+
+Settings → Notifications → **Send test notification** uses the existing
+authenticated `me/devices/check-push` endpoint with `send_test: true`. It sends a
+real alert only to this signed-in phone. **Check connection** remains validation
+only. Older websites that ignore `send_test` cannot claim that a test was sent.
+Receipt time refreshes when a foreground push arrives and when the app resumes.
+The installed app must be rebuilt to version **1.0.10+11** to include these controls.
+
+To diagnose an installed build without rebuilding, run from the deployed Laravel
+root (replace `123` with the receiving account's user ID):
+
+```sh
+php artisan push:status --user=123 --test
+```
+
+Keep the recipient app backgrounded for this test, then reopen Notifications and
+inspect the receipt time and Phone delivery details. Share the command output
+and that screen; the command does not print private keys or device tokens.
+An `authentication_rejected` result still requires repairing the server key or
+clock. An `accepted` result followed by no phone receipt requires checking the
+installed build/token and device delivery, rather than treating registration as
+evidence that a notification was sent. The automatic tests simulate providers;
+production transport and the affected physical phone remain unverified.
+
+## Mobile notification fix: 1.0.9+10
+
+Rebuild and install the mobile app with the version in `flutter_app/pubspec.yaml`.
+The previous manifest still declared `1.0.0+2`, so registration selected the
+server's legacy alert format instead of the native Android View/Reply path.
+Open the updated app once while signed in to register its new version and token.
+Do not override the build name with an older version.
+
+Foreground chat, email, friend request/acceptance and general pushes now create
+system notifications even when an in-app banner cannot be displayed. Chats
+currently being read remain quiet. Device category controls, quiet hours and
+the foreground sound preference still apply. Background alerts retain the
+phone's default sound, independently of the foreground sound preference.
+
+The server must have the device metadata migration applied and valid Firebase
+configuration. From the deployed Laravel root, run `php artisan migrate --force`
+and `php artisan optimize:clear` using the normal deployment process. Diagnose
+an affected account with `php artisan push:status --user=<id> --probe`, then
+`php artisan push:status --user=<id> --test` to send a real test alert. A successful
+probe is not evidence of phone receipt. Use Settings → Device notifications →
+Check connection and Android delivery details to distinguish configuration,
+registration and OS permission/channel failures.
+
+Verify chat, new email, friend request, acceptance and an ordinary activity alert
+with two accounts while the recipient app is open, backgrounded, locked and
+swiped away. A PHP-only deployment cannot update the installed mobile app.
+Production FCM/APNs delivery and physical-phone presentation require this check.
+
 ## Web deployment
 
 Install the committed Composer/npm dependencies and build frontend assets:
@@ -177,3 +236,9 @@ than 9 KB omit the inline signal and trigger REST replay. Termination broadcasts
 wait for database commit but do not enter a background job queue. Polling is
 kept for heartbeat, guests, reconnect replay and deployments without broadcasts.
 The standalone website meeting page now loads the realtime client too.
+
+### Test push arrives but normal events do not
+
+The connection test uses the Activity category; chats, emails and friend events use New messages. Enable New messages in app notification settings and check its Android channel settings. After a second account sends a chat while the recipient app is in the background, inspect Phone delivery details before sending another test. `muted_in_app`, `quiet_hours` and `channel_blocked` identify local suppression; an unchanged last receipt requires investigating the deployed event producer and recipient account/device registration.
+
+AppServiceProvider now checks listener registration after every provider has booted. It adds SendPushForNotification only when discovery or the deployed event cache omitted it. This supports older cached event manifests without sending database alerts twice. Upload the website PHP files as well as installing the previously rebuilt app. After deploying, run `php artisan event:clear` (or rebuild with `php artisan event:cache` as part of deployment), then restart long-running workers with `php artisan queue:restart`. This fallback covers database notifications; chat uses FriendChatService and FriendPush independently. Successful local tests cannot confirm which path is failing on the deployed server.

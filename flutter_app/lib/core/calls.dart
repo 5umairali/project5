@@ -592,6 +592,7 @@ class CallManager with WidgetsBindingObserver {
     AppRefresh.bump();
     final from = l['from_id'] as int;
     if (_foreground && openChatId == from) return; // you are reading that chat
+    if (NotifyService.I.hasShownChatMessage(id)) return;
     final ctx = rootNavKey.currentContext;
     if (ctx == null) return;
     final prefs = ctx.read<AppPrefs>();

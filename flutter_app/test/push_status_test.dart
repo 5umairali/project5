@@ -20,7 +20,7 @@ void main() {
     final registered = PushConnectionStatus.fromRegistration({'push_configured': true, 'push_status': 'registered', 'registration_needs_migration': true, 'voip_configured': false});
     expect(registered.needsMigration, true);
     expect(registered.voipConfigured, false);
-    expect(registered.message, contains('try a real call'));
+    expect(registered.message, contains('Firebase delivery has not been checked'));
   });
 
   test('older registration responses leave configuration unknown without blaming credentials', () {

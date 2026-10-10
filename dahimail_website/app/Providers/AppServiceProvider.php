@@ -82,7 +82,17 @@ class AppServiceProvider extends ServiceProvider
     {
         \App\Models\FriendRequest::observe(\App\Observers\FriendRequestObserver::class);
         \App\Models\Message::observe(\App\Observers\MessageNotificationObserver::class);
-        Event::listen(\Illuminate\Notifications\Events\NotificationSent::class, \App\Listeners\SendPushForNotification::class);
+        // An older event cache can omit this listener. Register a fallback only
+        // after all providers have booted, so discovery cannot add a duplicate.
+        $this->app->booted(function () {
+            $event = \Illuminate\Notifications\Events\NotificationSent::class;
+            $listener = \App\Listeners\SendPushForNotification::class;
+            foreach (Event::getRawListeners()[$event] ?? [] as $registered) {
+                if ($registered === $listener || $registered === $listener.'@handle'
+                    || $registered === [$listener, 'handle']) return;
+            }
+            Event::listen($event, $listener);
+        });
         // Super Admin bypasses all Spatie permission checks (like SnapNest)
         Gate::before(function ($user, $ability) {
             if ($user->hasRole('Super Admin')) {

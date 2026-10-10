@@ -172,7 +172,7 @@ class NativeMessagingServiceTest {
     @Test fun olderDataOnlyMessagesPostNativelyWithoutLayoutMarkerOrFlutter() {
         val service = Robolectric.buildService(RecordingMessagingService::class.java).create()
         service.get().failFlutter = true
-        for (type in listOf("chat", "email_received", "friend_request", "notification")) {
+        for (type in listOf("chat", "email_received", "friend_request", "friend_accepted", "notification")) {
             service.get().onMessageReceived(RemoteMessage(Bundle().apply {
                 putString("type", type)
                 putString("google.message_id", "synthetic-$type")
@@ -182,8 +182,18 @@ class NativeMessagingServiceTest {
             assertTrue(service.get().postedBeforeFlutter)
             assertEquals("1", service.get().forwarded.last().getStringExtra("dm_native_shown"))
         }
-        assertEquals(4, manager.activeNotifications.size)
+        assertEquals(5, manager.activeNotifications.size)
         service.destroy()
+    }
+
+    @Test fun foregroundSilentAlertDoesNotSilenceBackgroundChannel() {
+        val data = mapOf("type" to "chat", "title" to "Alice", "body" to "Hello", "notification_id" to "silent-1")
+        assertTrue(NativePushReceiver.showAlert(context, data + ("play_sound" to "false")))
+        val silent = manager.getNotificationChannel(manager.activeNotifications.single().notification.channelId)
+        assertNull(silent.sound)
+        assertTrue(NativePushReceiver.showAlert(context, data + ("notification_id" to "audible-2")))
+        val audible = manager.activeNotifications.first { it.notification.channelId != silent.id }.notification
+        assertNotNull(manager.getNotificationChannel(audible.channelId).sound)
     }
 
     @Test fun dataOnlyMessageBannerAlsoSurvivesColdServiceDelivery() {

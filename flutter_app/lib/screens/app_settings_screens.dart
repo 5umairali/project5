@@ -100,12 +100,14 @@ class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with 
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    PushReceipt.changes.addListener(_check);
     _check();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    PushReceipt.changes.removeListener(_check);
     super.dispose();
   }
 
@@ -182,6 +184,14 @@ class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with 
             },
             icon: const Icon(Icons.sync), label: Text(status.busy ? 'Connecting…' : 'Check connection'),
           ),
+          OutlinedButton.icon(
+            onPressed: status.busy ? null : () async {
+              await PushService.I.checkConnection(Api.of(context), sendTest: true);
+              if (mounted) await _check();
+            },
+            icon: const Icon(Icons.send_outlined), label: const Text('Send test notification'),
+          ),
+          const Text('Check connection validates registration only. Send test notification asks the website to deliver an actual alert.'),
           Text(_lastReceipt == null ? 'No remote push received yet.'
             : 'Last remote push: ${DateTime.tryParse(_lastReceipt!)?.toLocal() ?? _lastReceipt}'),
           if (_deliveryDetails != null) ExpansionTile(

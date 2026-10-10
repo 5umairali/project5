@@ -19,7 +19,10 @@ class PushConnectionStatus {
   String get message => switch (code) {
     'connecting' => 'Connecting this phone for background alerts…',
     'checking' => 'Checking this phone’s connection with Firebase…',
-    'registered' => 'Registered with the server. Check the connection below, then try a real call while the app is closed.',
+    'registered' => 'This phone is saved on the website. Firebase delivery has not been checked yet. Tap Check connection or Send test notification.',
+    'sending_test' => 'Asking the website to send a real notification to this phone…',
+    'test_sent' => 'Firebase accepted the test notification. Check for an alert and a new Last remote push time below; acceptance alone does not confirm phone receipt.',
+    'test_unavailable' => 'The website validated this phone but did not confirm sending a test. Update the website mobile API or ask the administrator to run the push delivery test.',
     'accepted' => 'Firebase accepted this phone’s registration check. Try a real call or message while using another app to confirm delivery.',
     'server_status_unknown' => 'This phone was saved, but the website did not report its push configuration. Use Check connection to verify Firebase; the website may need the current mobile API update.',
     'server_unconfigured' => 'The website’s Firebase credentials are missing or invalid. The server administrator must configure background delivery.',
