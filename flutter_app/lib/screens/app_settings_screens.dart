@@ -14,9 +14,6 @@ import '../core/app_permissions.dart';
 import '../core/device_env.dart';
 import '../core/native_calls.dart';
 import '../core/prefs.dart';
-import '../core/push.dart';
-import '../core/push_status.dart';
-import '../core/push_receipt.dart';
 import '../core/sounds.dart';
 import '../core/theme.dart';
 import '../core/util.dart';
@@ -36,16 +33,16 @@ class AppSettingsPage extends StatelessWidget {
     final prefs = context.watch<AppPrefs>();
     final lock = context.watch<AppLock>();
     Widget row(IconData icon, String title, String sub, Widget page, {String? pageTitle}) => AppCard(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: EdgeInsets.zero,
-          child: ListTile(
-            leading: IconTile(icon),
-            title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(sub, style: const TextStyle(fontSize: 12.5)),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => pushPage(context, AppPage(title: pageTitle ?? title, body: page)),
-          ),
-        );
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.zero,
+      child: ListTile(
+        leading: IconTile(icon),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(sub, style: const TextStyle(fontSize: 12.5)),
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: () => pushPage(context, AppPage(title: pageTitle ?? title, body: page)),
+      ),
+    );
     return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 96), children: [
       const SectionHeader('This device'),
       row(Icons.palette_outlined, 'Appearance', switch (prefs.themeMode) { ThemeMode.light => 'Light', ThemeMode.dark => 'Dark', _ => 'Follow system' }, const AppearancePage()),
@@ -67,11 +64,11 @@ class AppearancePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.watch<AppPrefs>();
     Widget opt(ThemeMode m, IconData icon, String title, String sub) => RadioListTile<ThemeMode>(
-          value: m,
-          secondary: Icon(icon),
-          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text(sub),
-        );
+      value: m,
+      secondary: Icon(icon),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(sub),
+    );
     return ListView(padding: const EdgeInsets.all(16), children: [
       const SectionHeader('Theme'),
       AppCard(padding: EdgeInsets.zero, child: RadioGroup<ThemeMode>(groupValue: p.themeMode, onChanged: (v) => p.setThemeMode(v ?? ThemeMode.system), child: Column(children: [
@@ -94,20 +91,17 @@ class DeviceNotificationsPage extends StatefulWidget {
 class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with WidgetsBindingObserver {
   bool? _allowed;
   bool? _fullScreen;
-  String? _lastReceipt, _deliveryDetails;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    PushReceipt.changes.addListener(_check);
     _check();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    PushReceipt.changes.removeListener(_check);
     super.dispose();
   }
 
@@ -119,9 +113,7 @@ class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with 
   Future<void> _check() async {
     final a = await NotifyService.I.allowed();
     final fullScreen = await DeviceEnv.canFullScreenIntent();
-    final receipt = await PushReceipt.lastReceived();
-    final details = await DeviceEnv.notificationDiagnostics();
-    if (mounted) setState(() { _allowed = a; _fullScreen = fullScreen; _lastReceipt = receipt; _deliveryDetails = details; });
+    if (mounted) setState(() { _allowed = a; _fullScreen = fullScreen; });
   }
 
   Future<void> _batterySettings(BuildContext context) async {
@@ -152,11 +144,11 @@ class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with 
   Widget build(BuildContext context) {
     final p = context.watch<AppPrefs>();
     Widget sw(String key, bool v, String title, {String? sub, bool enabled = true}) => SwitchListTile(
-          value: v,
-          onChanged: enabled ? (x) => p.setFlag(key, x) : null,
-          title: Text(title),
-          subtitle: sub == null ? null : Text(sub, style: const TextStyle(fontSize: 12.5)),
-        );
+      value: v,
+      onChanged: enabled ? (x) => p.setFlag(key, x) : null,
+      title: Text(title),
+      subtitle: sub == null ? null : Text(sub, style: const TextStyle(fontSize: 12.5)),
+    );
     final on = p.notifEnabled && _allowed != false;
     return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 96), children: [
       if (_allowed == false)
@@ -168,50 +160,17 @@ class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with 
             FilledButton(onPressed: _allow, child: const Text('Allow notifications')),
           ]),
         ),
-      const SectionHeader('Background calls and messages'),
-      AppCard(child: ValueListenableBuilder<PushConnectionStatus>(
-        valueListenable: PushService.I.status,
-        builder: (context, status, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(status.message),
-          if (status.needsMigration) const Text('The website administrator must run the pending database migrations.'),
-          if (Platform.isIOS && status.voipConfigured == false)
-            const Text('The website must configure Apple incoming-call delivery.'),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: status.busy ? null : () async {
-              await PushService.I.checkConnection(Api.of(context));
-              if (mounted) await _check();
-            },
-            icon: const Icon(Icons.sync), label: Text(status.busy ? 'Connecting…' : 'Check connection'),
-          ),
-          OutlinedButton.icon(
-            onPressed: status.busy ? null : () async {
-              await PushService.I.checkConnection(Api.of(context), sendTest: true);
-              if (mounted) await _check();
-            },
-            icon: const Icon(Icons.send_outlined), label: const Text('Send test notification'),
-          ),
-          const Text('Check connection validates registration only. Send test notification asks the website to deliver an actual alert.'),
-          Text(_lastReceipt == null ? 'No remote push received yet.'
-            : 'Last remote push: ${DateTime.tryParse(_lastReceipt!)?.toLocal() ?? _lastReceipt}'),
-          if (_deliveryDetails != null) ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            title: const Text('Phone delivery details'),
-            children: [Text(_deliveryDetails!)],
-          ),
-        ]),
-      )),
       const SectionHeader('Phone permissions'),
       AppCard(padding: EdgeInsets.zero, child: Column(children: [
         ListTile(leading: const Icon(Icons.notifications_outlined), title: const Text('Phone notification settings'),
-          subtitle: Text(_allowed == false ? 'Blocked' : 'Manage notification permission and display'),
-          trailing: const Icon(Icons.open_in_new), onTap: AppPermissions.openNotificationSettings),
+            subtitle: Text(_allowed == false ? 'Blocked' : 'Manage notification permission and display'),
+            trailing: const Icon(Icons.open_in_new), onTap: AppPermissions.openNotificationSettings),
         if (Platform.isAndroid) ListTile(leading: const Icon(Icons.phone_locked_outlined), title: const Text('Incoming calls on lock screen'),
-          subtitle: Text(_fullScreen == true ? 'Allowed' : 'Allow full-screen incoming calls'),
-          trailing: const Icon(Icons.open_in_new), onTap: DeviceEnv.openFullScreenIntentSettings),
+            subtitle: Text(_fullScreen == true ? 'Allowed' : 'Allow full-screen incoming calls'),
+            trailing: const Icon(Icons.open_in_new), onTap: DeviceEnv.openFullScreenIntentSettings),
         ListTile(leading: const Icon(Icons.battery_charging_full_rounded), title: const Text('Background battery settings'),
-          subtitle: const Text('Allow calls and messages while the app is closed'),
-          trailing: const Icon(Icons.open_in_new), onTap: () => _batterySettings(context)),
+            subtitle: const Text('Allow calls and messages while the app is closed'),
+            trailing: const Icon(Icons.open_in_new), onTap: () => _batterySettings(context)),
       ])),
       const SectionHeader('Show notifications'),
       AppCard(padding: EdgeInsets.zero, child: Column(children: [
@@ -369,22 +328,22 @@ class _PinDialogState extends State<_PinDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.title),
-        content: TextField(
-          controller: _c,
-          autofocus: true,
-          obscureText: _hide,
-          keyboardType: TextInputType.number,
-          maxLength: 6,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          onSubmitted: (_) => _ok(),
-          decoration: InputDecoration(counterText: '', errorText: _err, hintText: '••••', suffixIcon: IconButton(tooltip: 'Show or hide PIN', icon: Icon(_hide ? Icons.visibility_off_outlined : Icons.visibility_outlined), onPressed: () => setState(() => _hide = !_hide))),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(onPressed: _ok, child: const Text('OK')),
-        ],
-      );
+    title: Text(widget.title),
+    content: TextField(
+      controller: _c,
+      autofocus: true,
+      obscureText: _hide,
+      keyboardType: TextInputType.number,
+      maxLength: 6,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      onSubmitted: (_) => _ok(),
+      decoration: InputDecoration(counterText: '', errorText: _err, hintText: '••••', suffixIcon: IconButton(tooltip: 'Show or hide PIN', icon: Icon(_hide ? Icons.visibility_off_outlined : Icons.visibility_outlined), onPressed: () => setState(() => _hide = !_hide))),
+    ),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+      TextButton(onPressed: _ok, child: const Text('OK')),
+    ],
+  );
 
   void _ok() {
     final v = _c.text;
@@ -436,36 +395,36 @@ class _PermissionsPageState extends State<PermissionsPage> with WidgetsBindingOb
   Widget build(BuildContext context) {
     final lock = context.watch<AppLock>();
     Widget row(IconData icon, String title, String why, {required String status, required bool ok, VoidCallback? action, String? actionLabel}) => AppCard(
-          margin: const EdgeInsets.only(bottom: 8),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            IconTile(icon),
-            const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 2),
-              Text(why, style: const TextStyle(fontSize: 12.5, height: 1.35, color: AppColors.muted)),
-              const SizedBox(height: 6),
-              Row(children: [
-                Icon(ok ? Icons.check_circle_rounded : Icons.remove_circle_outline_rounded, size: 16, color: ok ? AppColors.successText : AppColors.warnText),
-                const SizedBox(width: 5),
-                Expanded(child: Text(status, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: ok ? AppColors.successText : AppColors.warnText))),
-                if (action != null) TextButton(style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10), tapTargetSize: MaterialTapTargetSize.shrinkWrap), onPressed: action, child: Text(actionLabel ?? 'Change')),
-              ]),
-            ])),
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        IconTile(icon),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(why, style: const TextStyle(fontSize: 12.5, height: 1.35, color: AppColors.muted)),
+          const SizedBox(height: 6),
+          Row(children: [
+            Icon(ok ? Icons.check_circle_rounded : Icons.remove_circle_outline_rounded, size: 16, color: ok ? AppColors.successText : AppColors.warnText),
+            const SizedBox(width: 5),
+            Expanded(child: Text(status, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: ok ? AppColors.successText : AppColors.warnText))),
+            if (action != null) TextButton(style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10), tapTargetSize: MaterialTapTargetSize.shrinkWrap), onPressed: action, child: Text(actionLabel ?? 'Change')),
           ]),
-        );
+        ])),
+      ]),
+    );
     return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 96), children: [
       Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('${AppConfig.appName} only asks for what a feature needs, at the moment you use it. You can change any permission in your phone’s settings.', style: const TextStyle(fontSize: 13, height: 1.4, color: AppColors.muted))),
       if (!_loaded) const LinearProgressIndicator(minHeight: 2),
       row(Icons.notifications_outlined, 'Notifications', 'Alerts for new messages and activity while the app is in the background.',
           status: _notif ? 'Allowed' : 'Blocked', ok: _notif, actionLabel: _notif ? 'Settings' : 'Allow', action: () async {
-        if (_notif) {
-          await AppPermissions.openNotificationSettings();
-        } else {
-          await NotifyService.I.requestPermission(); // dialog, or the phone's notification settings if blocked
-        }
-        _load();
-      }),
+            if (_notif) {
+              await AppPermissions.openNotificationSettings();
+            } else {
+              await NotifyService.I.requestPermission(); // dialog, or the phone's notification settings if blocked
+            }
+            _load();
+          }),
       if (Platform.isAndroid) ...[
         row(Icons.phone_in_talk_rounded, 'Calls on the lock screen', 'Lets an incoming call fill the screen like a normal phone call, also when the phone is locked.',
             status: _lockCalls ? 'Allowed' : 'Off – calls show only as a small banner', ok: _lockCalls, actionLabel: _lockCalls ? null : 'Allow', action: _lockCalls ? null : () async { await DeviceEnv.openFullScreenIntentSettings(); }),
@@ -562,31 +521,31 @@ class _StoragePageState extends State<StoragePage> {
 
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
-        AppCard(
-          child: Row(children: [
-            const IconTile(Icons.storage_rounded, size: 44),
-            const SizedBox(width: 14),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_bytes == null ? 'Checking…' : _fmt(_bytes!), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-              const Text('Saved lists and emails', style: TextStyle(color: AppColors.muted, fontSize: 13)),
-            ])),
-          ]),
-        ),
-        const SizedBox(height: 4),
-        AppCard(
-          child: Text(
-            '${AppConfig.appName} remembers the emails you opened and the last state of your screens, so they open instantly and pictures are not downloaded again. '
+    AppCard(
+      child: Row(children: [
+        const IconTile(Icons.storage_rounded, size: 44),
+        const SizedBox(width: 14),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(_bytes == null ? 'Checking…' : _fmt(_bytes!), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+          const Text('Saved lists and emails', style: TextStyle(color: AppColors.muted, fontSize: 13)),
+        ])),
+      ]),
+    ),
+    const SizedBox(height: 4),
+    AppCard(
+      child: Text(
+        '${AppConfig.appName} remembers the emails you opened and the last state of your screens, so they open instantly and pictures are not downloaded again. '
             'The data lives only in the app\'s private storage on this phone and is deleted when you sign out.',
-            style: const TextStyle(fontSize: 13.5, height: 1.5, color: AppColors.muted),
-          ),
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: _busy ? null : _clear,
-          icon: _busy ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.delete_outline_rounded, color: AppColors.danger),
-          label: const Text('Clear saved data', style: TextStyle(color: AppColors.danger)),
-        ),
-      ]);
+        style: const TextStyle(fontSize: 13.5, height: 1.5, color: AppColors.muted),
+      ),
+    ),
+    const SizedBox(height: 8),
+    OutlinedButton.icon(
+      onPressed: _busy ? null : _clear,
+      icon: _busy ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.delete_outline_rounded, color: AppColors.danger),
+      label: const Text('Clear saved data', style: TextStyle(color: AppColors.danger)),
+    ),
+  ]);
 }
 
 
@@ -598,11 +557,11 @@ class AccountHubPage extends StatelessWidget {
   const AccountHubPage({super.key});
 
   Widget _group(BuildContext context, String title, List<(IconData, String, String, Widget, String)> rows) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        SectionHeader(title),
-        MenuGroup(children: [
-          for (final r in rows) MenuRow(icon: r.$1, title: r.$2, subtitle: r.$3, chevron: true, onTap: () => pushPage(context, AppPage(title: r.$5, body: r.$4))),
-        ]),
-      ]);
+    SectionHeader(title),
+    MenuGroup(children: [
+      for (final r in rows) MenuRow(icon: r.$1, title: r.$2, subtitle: r.$3, chevron: true, onTap: () => pushPage(context, AppPage(title: r.$5, body: r.$4))),
+    ]),
+  ]);
 
   Future<void> _signOut(BuildContext context) async {
     final session = context.read<Session>();

@@ -158,9 +158,26 @@ class MainActivity : FlutterFragmentActivity() {
                     "pipArm" -> { pipArmed = call.argument<Boolean>("on") ?: false; result.success(true) }
                     "openBatterySettings" -> {
                         try {
-                            val i = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(i); result.success(true)
-                        } catch (e: Exception) { result.success(false) }
+                            // The generic list is easy to miss and does not help users configure this app.
+                            // Open the app-specific exemption page first; some OEMs reject it, so retain a
+                            // deterministic fallback to the app details / generic battery list.
+                            val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:$packageName"))
+                            startActivity(direct)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            try {
+                                val app = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:$packageName"))
+                                startActivity(app)
+                                result.success(true)
+                            } catch (e2: Exception) {
+                                try {
+                                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                    result.success(true)
+                                } catch (e3: Exception) { result.success(false) }
+                            }
+                        }
                     }
                     else -> result.notImplemented()
                 }

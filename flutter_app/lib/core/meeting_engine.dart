@@ -173,6 +173,9 @@ class MeetingEngine extends ChangeNotifier {
   bool get isMod => role == 'host' || role == 'cohost';
   bool get isHost => role == 'host';
   String get title => '${meeting['title'] ?? 'Meeting'}';
+  bool get isCall => meeting['kind'] == 'call';
+  bool get isAudioCall => isCall && (meeting['audio_only'] == true || title.toLowerCase().contains('audio'));
+  String get roomLabel => isCall ? (isAudioCall ? 'audio call' : 'video call') : 'meeting';
   String get url => '${meeting['url'] ?? ''}';
   bool get locked => meeting['locked'] == true;
   /// Only signed-in people can add friends (guests have no friends list).
@@ -422,9 +425,18 @@ class MeetingEngine extends ChangeNotifier {
         if (c.candidate != null) _send(id, 'ice', {'candidate': c.candidate, 'sdpMid': c.sdpMid, 'sdpMLineIndex': c.sdpMLineIndex});
       };
       pc.onTrack = (RTCTrackEvent e) {
+        // Prefer the negotiated stream supplied by the native WebRTC layer.
+        // Rebinding only a synthetic stream can hide the remote video track
+        // on some Android/iOS Unified Plan implementations.
+        final supplied = e.streams.isNotEmpty ? e.streams.first : null;
+        if (supplied != null) {
+          p.renderer.srcObject = supplied;
+          p.hasStream = true;
+          notifyListeners();
+        }
         unawaited(p.remoteMedia.add(e.track, (stream) {
           if (_closed || peers[id] != p || !p.rendererReady) return;
-          p.renderer.srcObject = stream;
+          if (p.renderer.srcObject == null || supplied == null) p.renderer.srcObject = stream;
           p.hasStream = true;
           notifyListeners();
         }).catchError((_) {}));

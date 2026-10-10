@@ -289,7 +289,7 @@ class _MeetingRoomPageState extends State<MeetingRoomPage> {
                     decoration: BoxDecoration(color: const Color(0xFFDC2626), borderRadius: BorderRadius.circular(10)),
                     child: Text('● REC ${_fmt(_e.recElapsed)}', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
                   ),
-                Text('${list.length} in the meeting${_e.locked ? '  ·  🔒' : ''}', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                Text('${list.length} in the ${_e.roomLabel}${_e.locked ? '  ·  🔒' : ''}', style: const TextStyle(color: Colors.white60, fontSize: 12)),
                 if (_leftSeconds != null) Text('   ${_leftSeconds! > 0 ? '⏳ ${_fmt(_leftSeconds!)} left' : 'Over time +${_fmt(_leftSeconds!)}'}', style: TextStyle(color: _leftSeconds! <= 0 ? Colors.redAccent : (_leftSeconds! <= 300 ? Colors.amber : Colors.white60), fontSize: 12, fontWeight: FontWeight.w600)),
               ]),
             ])),

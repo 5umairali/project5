@@ -19,7 +19,6 @@ import android.os.PowerManager
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
-import androidx.core.app.RemoteInput
 import androidx.core.graphics.drawable.IconCompat
 import com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver
 import io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver
@@ -93,6 +92,15 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
 
         private fun recordResult(context: Context, result: String) {
             context.getSharedPreferences("native_push", Context.MODE_PRIVATE).edit().putString("last_result", result).apply()
+        }
+
+        @Suppress("DEPRECATION")
+        private fun wakeDisplay(context: Context, tag: String) {
+            val power = context.getSystemService(PowerManager::class.java) ?: return
+            if (power.isInteractive) return
+            val wake = power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "Dahimail:$tag")
+            wake.setReferenceCounted(false)
+            wake.acquire(3500)
         }
 
         private fun canPost(context: Context, channelId: String): Boolean {
@@ -304,7 +312,12 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
             // Let Android evaluate the sleeping/locked state before waking the display.
             // IncomingCallActivity uses setTurnScreenOn + setShowWhenLocked. A wake
             // lock here can turn a screen-off full-screen call into a heads-up banner.
+            wakeDisplay(context, "incoming-call")
             manager.notify(id, notification)
+            // System UI normally launches the full-screen intent itself. On OEMs that
+            // suppress that launch while the process is cold, perform one bounded,
+            // permission-checked retry so a locked phone still wakes for the call.
+            if (!minimized) IncomingCallWakeup.schedule(context, callId)
             recordResult(context, "posted_call")
             if (minimized) minimizeCall(context, data)
             // Own ringtone lifetime independently of Activity/notification focus.
@@ -370,37 +383,18 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
                 else -> data["body"].orEmpty()
             }
             val sender = data["sender_name"].orEmpty().ifBlank { data["title"].orEmpty() }
-            val compact = messageView(context, label, sender, body, false, data)
-            val expanded = messageView(context, label, sender, body, true, data)
             val builder = NotificationCompat.Builder(context, channelId)
                 .setLargeIcon(avatarPlaceholder(sender))
                 .setSmallIcon(R.drawable.ic_stat_notify).setSubText(label)
                 .setContentTitle(sender).setContentText(body)
-                .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-                .setCustomContentView(compact).setCustomBigContentView(expanded)
-                .setCustomHeadsUpContentView(compact)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body).setBigContentTitle(sender))
                 .setPriority(NotificationCompat.PRIORITY_HIGH).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .setAutoCancel(true).setContentIntent(view).setOnlyAlertOnce(true)
                 .setDefaults(NotificationCompat.DEFAULT_LIGHTS or (if (vibrate) NotificationCompat.DEFAULT_VIBRATE else 0) or
                     (if (sound == "default") NotificationCompat.DEFAULT_SOUND else 0))
                 .setCategory(if (data["reply_kind"] != null) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_EVENT)
-                .addAction(0, "View", view)
-            if (data["reply_kind"] in listOf("friend", "conversation") && data["reply_id"]?.toIntOrNull() != null) {
-                val replyIntent = Intent(context, ActionBroadcastReceiver::class.java).apply {
-                    action = ActionBroadcastReceiver.ACTION_TAPPED
-                    this.data = Uri.parse("dahimail://notification/$id/reply")
-                    putExtra("notificationId", id)
-                    putExtra("payload", payload)
-                    putExtra("actionId", "notification_reply")
-                    putExtra("cancelNotification", false)
-                }
-                val mutable = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
-                val reply = PendingIntent.getBroadcast(context, id, replyIntent, PendingIntent.FLAG_UPDATE_CURRENT or mutable)
-                builder.addAction(NotificationCompat.Action.Builder(0, "Reply", reply)
-                    .addRemoteInput(RemoteInput.Builder("FlutterLocalNotificationsPluginInputResult").setLabel("Reply").build())
-                    .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).setShowsUserInterface(false).build())
-            }
             val manager = context.getSystemService(NotificationManager::class.java)
+            wakeDisplay(context, "notification")
             manager.notify(id, builder.build())
             recordResult(context, "posted_alert")
             // Avatar is optional. Never delay the alert or resurrect a dismissed one.
@@ -408,8 +402,6 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
             if (avatar.startsWith("https://")) images.execute {
                 val bitmap = fetchAvatar(avatar) ?: return@execute
                 if (manager.activeNotifications.any { it.id == id && it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() == body }) {
-                    compact.setImageViewBitmap(R.id.notification_avatar, bitmap)
-                    expanded.setImageViewBitmap(R.id.notification_avatar, bitmap)
                     manager.notify(id, builder.setLargeIcon(bitmap).build())
                 }
             }
