@@ -3,8 +3,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'api.dart';
+import 'remote_media.dart';
+import 'realtime.dart';
 import 'meeting_recording.dart';
 import 'app_permissions.dart';
 
@@ -16,6 +17,8 @@ class MeetingPeer {
   RTCPeerConnection? pc;
   final RTCVideoRenderer renderer = RTCVideoRenderer();
   bool rendererReady = false, remoteSet = false, hasStream = false;
+  final remoteMedia = RemoteMedia();
+  bool get hasVideo => remoteMedia.hasVideo;
   final queue = <RTCIceCandidate>[];
   MeetingPeer(this.pid);
 }
@@ -131,6 +134,26 @@ class MeetingEngine extends ChangeNotifier {
   List<dynamic> _ice = [];
   int _sigLast = 0, _chatLast = 0;
   Timer? _loop;
+  StreamSubscription<Map<String, dynamic>>? _realtime;
+  final _inbox = SignalInbox();
+  Future<void> _signal(MJson m) => _inbox.add(m, () async {
+    if (_closed) return;
+    await _handleSignal((m['from'] as num).toInt(), '${m['type']}', '${m['payload']}');
+  });
+
+  void _live(MJson e) {
+    if (_closed) return;
+    if (e['type'] == 'reconnected') { _poll(); return; }
+    if (e['code'] != code) return;
+    if (e['type'] == 'meeting_ended') { _end('The meeting has ended.'); return; }
+    if (e['type'] != 'meeting_signal' || e['to'] != pid) return;
+    final m = e['signal'];
+    // During peer creation use REST replay after initialization, so a socket
+    // event cannot race the renderer/connection setup and lose an offer.
+    if (_polling || m is! Map || peers[m['from']]?.pc == null) { _pollAgain = _polling; _poll(); return; }
+    unawaited(_signal(Map<String, dynamic>.from(m)).catchError((_) {}));
+  }
+  bool _pollAgain = false;
   bool _polling = false, _closed = false, _rendererReady = false;
   int _misses = 0;
   bool _dead = false;
@@ -278,6 +301,7 @@ class MeetingEngine extends ChangeNotifier {
       try {
         await Helper.setSpeakerphoneOn(speaker);
       } catch (_) {}
+      _realtime = Realtime.I.events.listen(_live);
       _loop = Timer.periodic(const Duration(seconds: 1), (_) => _poll());
       _poll();
     } on ApiException catch (e) {
@@ -340,7 +364,7 @@ class MeetingEngine extends ChangeNotifier {
         final m = Map<String, dynamic>.from(s as Map);
         final id = (m['id'] as num).toInt();
         if (id > _sigLast) _sigLast = id;
-        await _handleSignal((m['from'] as num).toInt(), '${m['type']}', '${m['payload']}');
+        await _signal(m);
       }
       for (final c in (j['chat'] as List? ?? const [])) {
         final m = Map<String, dynamic>.from(c as Map);
@@ -361,6 +385,7 @@ class MeetingEngine extends ChangeNotifier {
       if (++_misses >= 60) await _end('Connection lost.');
     } finally {
       _polling = false;
+      if (_pollAgain && !_closed) { _pollAgain = false; scheduleMicrotask(_poll); }
     }
   }
 
@@ -397,11 +422,12 @@ class MeetingEngine extends ChangeNotifier {
         if (c.candidate != null) _send(id, 'ice', {'candidate': c.candidate, 'sdpMid': c.sdpMid, 'sdpMLineIndex': c.sdpMLineIndex});
       };
       pc.onTrack = (RTCTrackEvent e) {
-        if (!_closed && peers[id] == p && p.rendererReady && e.streams.isNotEmpty) {
-          p.renderer.srcObject = e.streams[0];
+        unawaited(p.remoteMedia.add(e.track, (stream) {
+          if (_closed || peers[id] != p || !p.rendererReady) return;
+          p.renderer.srcObject = stream;
           p.hasStream = true;
           notifyListeners();
-        }
+        }).catchError((_) {}));
       };
       pc.onConnectionState = (RTCPeerConnectionState s) {
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateFailed && peers[id] == p && !_closed) {
@@ -410,7 +436,8 @@ class MeetingEngine extends ChangeNotifier {
       };
       return p;
     } catch (_) {
-      return p;
+      if (peers[id] == p) await _dropPeer(id);
+      return null;
     }
   }
 
@@ -423,6 +450,7 @@ class MeetingEngine extends ChangeNotifier {
     notifyListeners();
     try {
       p.renderer.srcObject = null;
+      await p.remoteMedia.dispose();
       await p.pc?.close();
       if (ready) await p.renderer.dispose();
     } catch (_) {}
@@ -606,18 +634,14 @@ class MeetingEngine extends ChangeNotifier {
   // ───────────── leave / end ─────────────
   Future<void> leave() async {
     if (_closed) return;
-    try {
-      await _recorder.finish();
-    } catch (_) { recNotice = 'Recording upload failed. Please try leaving again to retry.'; notifyListeners(); return; }
-    try {
-      await api.post('meetings/$code/leave', {'pid': pid});
-    } catch (_) {}
+    unawaited(api.post('meetings/$code/leave', {'pid': pid}).catchError((_) {}));
     await _end('You left the meeting.');
   }
 
   Future<void> endForAll() async {
-    try { await _recorder.finish(); } catch (_) { recNotice = 'Recording upload failed. Please try again.'; notifyListeners(); return; }
-    await hostAction('end');
+    if (_closed) return;
+    if (!isMod) return;
+    unawaited(api.post('meetings/$code/host', {'pid': pid, 'action': 'end'}).catchError((_) {}));
     await _end('You ended the meeting for everyone.');
   }
 
@@ -625,14 +649,18 @@ class MeetingEngine extends ChangeNotifier {
     if (_closed) return;
     message = why;
     phase = 'ended';
-    await _release();
     notifyListeners();
+    await _release();
   }
 
-  Future<void> _release() async {
+  Future<void>? _releasing;
+  Future<void> _release() => _releasing ??= _releaseMedia();
+
+  Future<void> _releaseMedia() async {
     _closed = true;
     _loop?.cancel();
-    try { await _recorder.finish(); } catch (_) { recNotice = 'Recording could not be uploaded. The audio file remains saved on this phone.'; }
+    _realtime?.cancel();
+    unawaited(_recorder.finish().catchError((_) { recNotice = 'Recording could not be uploaded. The audio file remains saved on this phone.'; }));
     if (_preview != null) await _preview;
     for (final id in peers.keys.toList()) {
       await _dropPeer(id);
@@ -655,7 +683,7 @@ class MeetingEngine extends ChangeNotifier {
   Future<void> shutdown() async {
     if (!_closed && pid != 0 && phase != 'ended') {
       try {
-        await api.post('meetings/$code/leave', {'pid': pid});
+        unawaited(api.post('meetings/$code/leave', {'pid': pid}).catchError((_) {}));
       } catch (_) {}
     }
     await _release();

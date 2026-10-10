@@ -11,7 +11,7 @@ import android.os.Looper
 import org.json.JSONObject
 
 /** Keeps the ringing window alive after Firebase's delivery service returns. */
-class IncomingCallService : Service() {
+open class IncomingCallService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var callId = -1
     private val expire = Runnable {
@@ -28,15 +28,25 @@ class IncomingCallService : Service() {
         val notification = getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == 100000 + callId }?.notification
         if (remaining <= 0 || notification == null) { stopSelf(); return START_NOT_STICKY }
         try {
-            if (Build.VERSION.SDK_INT >= 34) startForeground(100000 + callId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
-            else startForeground(100000 + callId, notification)
+            promote(callId, notification)
             activeId = callId
             DeviceSounds.startIncoming(this, callId, NativePushReceiver.callExpiry(this, callId))
             IncomingCallOverlay.present(applicationContext, data, NativePushReceiver.isMinimized(this, callId))
             handler.removeCallbacks(expire)
             handler.postDelayed(expire, remaining)
-        } catch (_: RuntimeException) { stopSelf() }
+        } catch (_: RuntimeException) {
+            // startForegroundService() returning successfully does not prove that
+            // startForeground() succeeded. Preserve audible delivery in either case.
+            try { NativePushReceiver.useSystemRingtone(this, callId) }
+            catch (error: RuntimeException) {
+                android.util.Log.w("DahimailPush", "Call fallback failed: ${error.javaClass.simpleName}")
+            } finally { stopSelf() }
+        }
         return START_NOT_STICKY
+    }
+    protected open fun promote(id: Int, notification: android.app.Notification) {
+        if (Build.VERSION.SDK_INT >= 34) startForeground(100000 + id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
+        else startForeground(100000 + id, notification)
     }
     override fun onTimeout(startId: Int) { expire.run() }
     override fun onDestroy() {

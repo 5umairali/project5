@@ -6,6 +6,11 @@ import 'package:flutter/services.dart';
 class DeviceEnv {
   static const _ch = MethodChannel('com.dahify.dahimail/device');
   static String? _tz;
+
+  /// Whether this platform exposes Android full-screen incoming-call settings.
+  /// This is a platform capability; use canFullScreenIntent for the current grant.
+  static bool get supportsFullScreenIntent => Platform.isAndroid;
+
   /// Last known timezone, available synchronously (for request headers).
   static String? get cached => _tz;
 
@@ -34,6 +39,7 @@ class DeviceEnv {
     };
     final result = switch (data['last_result']) {
       'posted_call' => 'Call alert posted to Android',
+      'posted_call_system_ringtone' => 'Call alert posted to Android with system ringtone fallback',
       'posted_alert' => 'Message alert posted to Android',
       'notifications_blocked' => 'Blocked by Android notification permission',
       'channel_blocked' => 'Blocked by Android notification channel',

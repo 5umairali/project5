@@ -169,6 +169,23 @@ class NativeMessagingServiceTest {
         service.destroy()
     }
 
+    @Test fun olderDataOnlyMessagesPostNativelyWithoutLayoutMarkerOrFlutter() {
+        val service = Robolectric.buildService(RecordingMessagingService::class.java).create()
+        service.get().failFlutter = true
+        for (type in listOf("chat", "email_received", "friend_request", "notification")) {
+            service.get().onMessageReceived(RemoteMessage(Bundle().apply {
+                putString("type", type)
+                putString("google.message_id", "synthetic-$type")
+                putString("title", "Alice Example")
+                putString("body", "Hello")
+            }))
+            assertTrue(service.get().postedBeforeFlutter)
+            assertEquals("1", service.get().forwarded.last().getStringExtra("dm_native_shown"))
+        }
+        assertEquals(4, manager.activeNotifications.size)
+        service.destroy()
+    }
+
     @Test fun dataOnlyMessageBannerAlsoSurvivesColdServiceDelivery() {
         val service = Robolectric.buildService(RecordingMessagingService::class.java).create()
         service.get().onMessageReceived(RemoteMessage(Bundle().apply {

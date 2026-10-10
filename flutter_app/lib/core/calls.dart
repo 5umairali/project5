@@ -5,11 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:provider/provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 import '../screens/call_screen.dart';
 import '../screens/friend_chat_page.dart';
 import '../screens/meeting_room_page.dart';
 import 'api.dart';
+import 'realtime.dart';
 import 'meeting_recording.dart';
 import 'android_callkit.dart';
 import 'app_permissions.dart';
@@ -127,17 +127,32 @@ class CallSession extends ChangeNotifier {
   }
 
   Future<void> decline() async {
-    try {
-      await api.post('calls/$id/decline');
-    } catch (_) {}
+    unawaited(api.post('calls/$id/decline').catchError((_) {}));
     await _finish(null);
   }
 
   Future<void> hangUp() => _finish('Call ended', tellServer: true);
 
+  final _inbox = SignalInbox();
+  StreamSubscription<Map<String, dynamic>>? _realtime;
+  Future<void> _signal(Map<String, dynamic> m) => _inbox.add(m, () async {
+    if (_closed) return;
+    await _handle('${m['type']}', '${m['payload']}');
+  });
+
   void _loop() {
+    _realtime ??= Realtime.I.events.listen((e) {
+      if (e['type'] == 'reconnected') { _pull(); return; }
+      if (e['call_id'] != id) return;
+      if (e['type'] == 'call_signal') {
+        if (_pc != null && e['signal'] is Map) {
+          unawaited(_signal(Map<String, dynamic>.from(e['signal'] as Map)).catchError((_) {}));
+        } else { _pull(); }
+      }
+    });
     _sig?.cancel();
     _sig = Timer.periodic(const Duration(seconds: 1), (_) => _pull());
+    _pull();
   }
 
   Future<void> _pull() async {
@@ -145,11 +160,12 @@ class CallSession extends ChangeNotifier {
     _pulling = true;
     try {
       final j = Api.obj(await api.getNoCache('calls/$id/signals', query: {'after': '$_last'}));
+      if (_closed) return;
       final signals = (j['signals'] as List? ?? const []);
       for (final s in signals) {
         final m = Map<String, dynamic>.from(s as Map);
         _last = (m['id'] as int) > _last ? m['id'] as int : _last;
-        await _handle('${m['type']}', '${m['payload']}');
+        await _signal(m);
       }
       final st = '${j['status']}';
       if (const ['ended', 'declined', 'cancelled', 'missed'].contains(st)) {
@@ -222,11 +238,10 @@ class CallSession extends ChangeNotifier {
     _closed = true;
     _sig?.cancel();
     _clock?.cancel();
-    if (tellServer) {
-      try {
-        await api.post('calls/$id/end');
-      } catch (_) {}
-    }
+    _realtime?.cancel();
+    _set('ended', reason: reason);
+    CallManager.I._ended(this);
+    if (tellServer) unawaited(api.post('calls/$id/end').catchError((_) {}));
     try {
       for (final t in _local?.getTracks() ?? const <MediaStreamTrack>[]) {
         await t.stop();
@@ -236,8 +251,6 @@ class CallSession extends ChangeNotifier {
     } catch (_) {}
     _pc = null;
     _local = null;
-    _set('ended', reason: reason);
-    CallManager.I._ended(this);
   }
 }
 
@@ -248,6 +261,27 @@ class CallManager with WidgetsBindingObserver {
   static final CallManager I = CallManager._();
 
   Session? _session;
+  StreamSubscription<Map<String, dynamic>>? _realtime;
+  final _cancelledCalls = <int>{};
+  void _live(Map<String, dynamic> event) {
+    final id = (event['call_id'] as num?)?.toInt();
+    if (event['type'] == 'call_cancel' && id != null && event['reason'] != 'answered') {
+      _cancelledCalls.add(id);
+      if (_cancelledCalls.length > 256) _cancelledCalls.remove(_cancelledCalls.first);
+      if (active?.id == id) active?._finish('Call ended');
+      if (incomingVideo?['id'] == id) {
+        incomingVideo = null;
+        _stopRing();
+        _videoId = null;
+        incomingMinimized = false;
+        videoGone.value++;
+        overlayChanged.value++;
+      }
+      NotifyService.dismissSystemIncomingCall(id).catchError((_) {});
+      CallKitBridge.endByCallId(id, '${event['reason']}');
+    }
+    if (const ['call', 'call_cancel', 'reconnected'].contains(event['type'])) { _tickAgain = _busy; _tick(); }
+  }
   final Set<int> _pendingDeclines = {};
   final Set<int> _pendingEnds = {};
   int? _nativeCallId;
@@ -260,6 +294,7 @@ class CallManager with WidgetsBindingObserver {
     if (_nativeCallId == id || active?.id == id) endFromSystem();
   }
   Timer? _poll, _ring, _rb;
+  bool _tickAgain = false;
   bool _busy = false, _foreground = true, _ringing = false;
   CallSession? active;
   int? _msgSeen;       // newest friend-message id already announced
@@ -325,6 +360,8 @@ class CallManager with WidgetsBindingObserver {
 
   void attach(Session s) {
     _session = s;
+    Realtime.I.start(Api(s));
+    _realtime ??= Realtime.I.events.listen(_live);
     if (_poll == null) unawaited(MeetingRecording.recover(Api(s)).catchError((_) {}));
     _foreground = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     for (final id in _pendingDeclines.toList()) { declineFromSystem(id); }
@@ -346,6 +383,10 @@ class CallManager with WidgetsBindingObserver {
   }
 
   void detach() {
+    _realtime?.cancel();
+    _realtime = null;
+    Realtime.I.stop();
+    _cancelledCalls.clear();
     _poll?.cancel();
     _poll = null;
     _stopRing();
@@ -359,7 +400,7 @@ class CallManager with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
     _foreground = s == AppLifecycleState.resumed;
-    if (_foreground) { _backgroundCallId = null; _tick(); AppRefresh.bump(); }
+    if (_foreground) { Realtime.I.reconnect(); _backgroundCallId = null; _tick(); AppRefresh.bump(); }
     if (s == AppLifecycleState.paused && defaultTargetPlatform == TargetPlatform.android && !inRoom) {
       final legacy = active;
       final call = incomingVideo ?? (legacy != null && !legacy.outgoing && legacy.state == 'ringing' ? legacy.call : null);
@@ -457,10 +498,12 @@ class CallManager with WidgetsBindingObserver {
       if (_session != s || !s.isLoggedIn) return;
       // A failed chat alert must not prevent an incoming call from opening.
       try { if (readRevision == _readRevision) await _messages(j['messages']); } catch (_) {}
-      final cur = j['current'];
+      final rawCurrent = j['current'];
+      final cur = rawCurrent is Map && _cancelledCalls.contains(rawCurrent['id']) ? null : rawCurrent;
       final rec = cur is Map && cur['recording_active'] == true;
       if (recordingActive.value != rec) recordingActive.value = rec;
-      final inc = j['incoming'];
+      final rawIncoming = j['incoming'];
+      final inc = rawIncoming is Map && _cancelledCalls.contains(rawIncoming['id']) ? null : rawIncoming;
       final incomingId = inc is Map ? (inc['id'] as num).toInt() : null;
       final backgroundId = _backgroundCallId;
       if (backgroundId != null && backgroundId != incomingId) {
@@ -528,6 +571,7 @@ class CallManager with WidgetsBindingObserver {
     } catch (_) {
     } finally {
       _busy = false;
+      if (_tickAgain && _session != null) { _tickAgain = false; scheduleMicrotask(_tick); }
     }
   }
 

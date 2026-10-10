@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../core/api.dart';
-import '../core/theme.dart';
 import '../core/widgets.dart';
 
 /// Chat privacy (inside Settings -> Privacy): last seen / online, and read receipts (blue ticks).

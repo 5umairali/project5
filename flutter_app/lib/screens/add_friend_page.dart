@@ -111,7 +111,7 @@ class _AddFriendPageState extends State<AddFriendPage> {
                 return ListTile(
                   leading: Avatar('${p['name']}', url: p['avatar_url'] as String?, radius: 22),
                   title: Text('${p['name']}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text([if ('${p['username'] ?? ''}'.isNotEmpty) '@${p['username']}', switch ('${p['via']}') { 'email' => 'found by e-mail', 'phone' => 'found by phone', _ => '' }].where((e) => e.isNotEmpty).join('  ·  ')),
+                  subtitle: Text([if ('${p['username'] ?? ''}'.isNotEmpty) '${p['username']}'.replaceFirst(RegExp(r'^@+'), ''), switch ('${p['via']}') { 'email' => 'found by e-mail', 'phone' => 'found by phone', _ => '' }].where((e) => e.isNotEmpty).join('  ·  ')),
                   trailing: _action(p),
                 );
               },

@@ -58,7 +58,7 @@ void main() {
     expect(NotificationPresentation.systemBody({'type': 'chat'}, 'Hello Alice'), 'Hello Alice');
   });
 
-  testWidgets('unified notification controls save preferences without diagnostic tools', (tester) async {
+  testWidgets('notification controls expose background recovery and save preferences', (tester) async {
     await http.runWithClient(() async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -88,7 +88,8 @@ void main() {
       child: const MaterialApp(home: Scaffold(body: DeviceNotificationsPage())),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('Check connection'), findsNothing);
+    expect(find.text('Check connection'), findsOneWidget);
+    expect(find.text('No remote push received yet.'), findsOneWidget);
     final settingsScroll = find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first;
     await tester.scrollUntilVisible(find.text('Background battery settings'), 180, scrollable: settingsScroll);
     await tester.pumpAndSettle();

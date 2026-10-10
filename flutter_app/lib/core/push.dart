@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -43,6 +44,8 @@ class PushService with WidgetsBindingObserver {
   static final PushService I = PushService._();
 
   String? _token;
+  String? _refreshedToken;
+  static const _firebaseTimeout = Duration(seconds: 15);
   final status = ValueNotifier<PushConnectionStatus>(const PushConnectionStatus('not_checked'));
   bool _listening = false;
   Api? _api;
@@ -57,6 +60,7 @@ class PushService with WidgetsBindingObserver {
 
   void _listen() {
     if (_listening) return;
+    final messaging = FirebaseMessaging.instance;
     _listening = true;
     WidgetsBinding.instance.addObserver(this);
     FirebaseMessaging.onMessage.listen((m) async {
@@ -85,22 +89,21 @@ class PushService with WidgetsBindingObserver {
         }, messageId: m.messageId, foreground: NotifyService.I.inForeground); } catch (_) {}
       }
     });
-    FirebaseMessaging.instance.onTokenRefresh.listen((token) {
-      _token = token;
+    messaging.onTokenRefresh.listen((token) {
+      _refreshedToken = token;
       if (_api != null) register(_api!);
     });
     FirebaseMessaging.onMessageOpenedApp.listen((m) {
       if (m.data['dm_local_actions'] != '1') NotifyService.I.openRemote(m.data);
     });
-    FirebaseMessaging.instance.getInitialMessage().then((first) {
+    messaging.getInitialMessage().then((first) {
       if (first != null && first.data['dm_local_actions'] != '1') NotifyService.I.openRemote(first.data);
     }).catchError((_) {});
   }
 
   Future<void> register(Api api) async {
-    if (!Platform.isIOS && !Platform.isAndroid) return;
+    if (kIsWeb || (defaultTargetPlatform != TargetPlatform.iOS && defaultTargetPlatform != TargetPlatform.android)) return;
     _api = api;
-    _listen(); // Receive token refreshes even when the first registration fails.
     if (_registering) { _registerAgain = true; return; }
     _registering = true;
     _retry?.cancel();
@@ -108,19 +111,23 @@ class PushService with WidgetsBindingObserver {
     status.value = const PushConnectionStatus('connecting', busy: true);
     var failure = 'firebase_unavailable';
     try {
+      _listen(); // Also retry listener setup if Firebase was initially unavailable.
       final fm = FirebaseMessaging.instance;
-      await fm.setForegroundNotificationPresentationOptions(alert: false, badge: true, sound: false);
-      if (Platform.isIOS && await fm.getAPNSToken() == null) {
+      await fm.setForegroundNotificationPresentationOptions(alert: false, badge: true, sound: false).timeout(_firebaseTimeout);
+      if (Platform.isIOS && await fm.getAPNSToken().timeout(_firebaseTimeout) == null) {
         failure = 'apns_pending';
         throw StateError('Waiting for APNs registration');
       }
-      final token = await fm.getToken();
+      // A refresh event already supplies the token; another getToken call can
+      // stall offline or return an older value while registration is in flight.
+      final token = _refreshedToken ?? await fm.getToken().timeout(_firebaseTimeout);
       if (token == null) throw StateError('Waiting for FCM registration');
       if (_api != api || api.session.token != sessionToken || sessionToken == null) return;
       _token = token;
       failure = 'registration_failed';
       final result = await _send(api, token);
       if (_api == api && api.session.token == sessionToken) {
+        if (_refreshedToken == token) _refreshedToken = null;
         status.value = result;
         NotifyService.I.pushActive = result.registered;
       }
@@ -154,7 +161,7 @@ class PushService with WidgetsBindingObserver {
   Future<PushConnectionStatus> _send(Api api, String token) async {
     String? version;
     try {
-      final info = await PackageInfo.fromPlatform();
+      final info = await PackageInfo.fromPlatform().timeout(_firebaseTimeout);
       version = '${info.version}+${info.buildNumber}';
     } catch (_) {}
     final response = await api.post('me/devices', {
@@ -170,23 +177,27 @@ class PushService with WidgetsBindingObserver {
   Future<void> checkConnection(Api api) async {
     if (_registering || status.value.busy) return;
     if (status.value.code == 'UNREGISTERED') {
-      try { await FirebaseMessaging.instance.deleteToken(); } catch (_) {}
+      try { await FirebaseMessaging.instance.deleteToken().timeout(_firebaseTimeout); } catch (_) {}
     }
     await register(api);
-    if (!status.value.registered || _token == null) return;
+    // Older websites save the token without returning push configuration fields.
+    // An unknown configuration must still allow a provider probe.
+    if (_token == null || (!status.value.registered && status.value.code != 'server_status_unknown')) return;
     final previous = status.value;
     final sessionToken = api.session.token;
-    status.value = PushConnectionStatus('checking', registered: true, busy: true);
+    status.value = PushConnectionStatus('checking', registered: previous.registered, busy: true);
     try {
       final response = await api.post('me/devices/check-push', {'token': _token});
       if (_api != api || api.session.token != sessionToken) return;
+      final accepted = response['accepted'] == true;
       status.value = PushConnectionStatus('${response['code'] ?? 'check_unavailable'}',
-        registered: true, voipConfigured: previous.voipConfigured, needsMigration: previous.needsMigration);
-      if (response['accepted'] != true) NotifyService.I.pushActive = false;
+        registered: previous.registered || accepted, voipConfigured: previous.voipConfigured, needsMigration: previous.needsMigration);
+      NotifyService.I.pushActive = accepted;
+      if (accepted) _retry?.cancel();
     } catch (_) {
       if (_api == api && api.session.token == sessionToken) {
         status.value = PushConnectionStatus('check_unavailable',
-          registered: true, voipConfigured: previous.voipConfigured, needsMigration: previous.needsMigration);
+          registered: previous.registered, voipConfigured: previous.voipConfigured, needsMigration: previous.needsMigration);
       }
     }
   }
@@ -199,9 +210,12 @@ class PushService with WidgetsBindingObserver {
     final t = _token;
     final registeredApi = _api;
     _api = null;
+    _refreshedToken = null;
+    _registerAgain = false;
     if (t == null) return;
     try { await (api ?? registeredApi)?.post('me/devices/remove', {'token': t}); } catch (_) {}
     _token = null;
-    try { await FirebaseMessaging.instance.deleteToken(); } catch (_) {}
+    _refreshedToken = null;
+    try { await FirebaseMessaging.instance.deleteToken().timeout(_firebaseTimeout); } catch (_) {}
   }
 }

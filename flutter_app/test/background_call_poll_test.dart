@@ -68,6 +68,7 @@ void main() {
         debugDefaultTargetPlatformOverride = null;
       }
     }, () => MockClient((request) async {
+      if (request.url.path.endsWith('/realtime/config')) return http.Response('{"enabled":false}', 200);
       expectSync(request.url.path, endsWith('/calls/poll'));
       if (pendingResponse != null) return pendingResponse!.future;
       return http.Response(jsonEncode({'incoming': incoming, 'current': null}), 200);

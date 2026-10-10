@@ -642,11 +642,13 @@ unset($__split);
                                 <?php echo e(__('Profile')); ?>
 
                             </a>
+                            <?php if(\Livewire\Mechanisms\ExtendBlade\ExtendBlade::isRenderingLivewireComponent()): ?><!--[if BLOCK]><![endif]--><?php endif; ?><?php if(!\App\Support\BillingPolicy::isFree()): ?>
                             <a href="<?php echo e(url('/settings/billing')); ?>" wire:navigate class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-ink transition hover:bg-muted/10">
                                 <svg viewBox="0 0 24 24" class="h-4 w-4 text-ink/60" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="5" width="20" height="14" rx="2"></rect><path d="M2 10h20"></path></svg>
                                 <?php echo e(__('Billing')); ?>
 
                             </a>
+                            <?php endif; ?><?php if(\Livewire\Mechanisms\ExtendBlade\ExtendBlade::isRenderingLivewireComponent()): ?><!--[if ENDBLOCK]><![endif]--><?php endif; ?>
                             <div class="my-2 border-t border-border/60"></div>
                             <form method="POST" action="<?php echo e(route('logout')); ?>">
                                 <?php echo csrf_field(); ?>

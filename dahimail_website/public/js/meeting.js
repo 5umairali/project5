@@ -324,8 +324,11 @@
     var pc = new RTCPeerConnection({ iceServers: S.ice });
     var peer = { pid: pid, pc: pc, stream: new MediaStream(), queue: [], remoteSet: false, aSender: null, vSender: null };
     S.peers[pid] = peer;
-    var a = pc.addTransceiver(S.audioTrack || 'audio', { direction: 'sendrecv' });
-    var v = pc.addTransceiver(currentVideo() || 'video', { direction: 'sendrecv' });
+    // Keep stable msid associations for native receivers, including tracks
+    // enabled later with replaceTrack (camera and screen sharing).
+    var outgoing = S.local || (S.local = new MediaStream());
+    var a = pc.addTransceiver(S.audioTrack || 'audio', { direction: 'sendrecv', streams: [outgoing] });
+    var v = pc.addTransceiver(currentVideo() || 'video', { direction: 'sendrecv', streams: [outgoing] });
     peer.aSender = a.sender; peer.vSender = v.sender;
     pc.ontrack = function (e) { if (peer.stream.getTracks().indexOf(e.track) < 0) peer.stream.addTrack(e.track); renderTiles(); watchLevel(pid, peer.stream); if (window.DahiRec) window.DahiRec.addRemote(peer.stream); };
     pc.onicecandidate = function (e) { if (e.candidate) sendSignal(pid, 'ice', JSON.stringify(e.candidate)); };

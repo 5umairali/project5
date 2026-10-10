@@ -32,6 +32,7 @@ class Session extends ChangeNotifier {
   bool ready = false;
 
   bool get isLoggedIn => token != null;
+  bool get billingEnabled => user?['billing_enabled'] != false;
   bool get isAdmin => user?['is_admin'] == true || user?['is_admin'] == 1;
   String get name => (user?['name'] ?? user?['username'] ?? 'User').toString();
   String get email => (user?['email'] ?? '').toString();

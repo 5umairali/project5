@@ -143,19 +143,19 @@ class NativePushReceiverTest {
         controller.pause().stop().destroy()
     }
 
-    @Test fun sleepingPhoneGetsBoundedDisplayWakeWithoutUnlockingKeyguard() {
+    @Test fun sleepingPhoneIsNotWokenBeforeAndroidEvaluatesFullScreenIntent() {
         val power = context.getSystemService(android.os.PowerManager::class.java)
         val keyguard = context.getSystemService(KeyguardManager::class.java)
         shadowOf(power).setIsInteractive(false)
-        shadowOf(keyguard).setKeyguardLocked(true)
+        shadowOf(keyguard).setKeyguardLocked(false) // Screen has turned off, keyguard has not locked yet.
         NativePushReceiver.showCall(context, call())
-        val wake = org.robolectric.shadows.ShadowPowerManager.getLatestWakeLock()
-        assertNotNull(wake)
-        assertTrue(wake.isHeld)
-        assertTrue(keyguard.isKeyguardLocked)
-        assertNotNull(manager.activeNotifications.single().notification.fullScreenIntent)
-        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofSeconds(4))
-        assertFalse(wake.isHeld)
+        assertNull(org.robolectric.shadows.ShadowPowerManager.getLatestWakeLock())
+        assertFalse(power.isInteractive)
+        val intent = shadowOf(manager.activeNotifications.single().notification.fullScreenIntent).savedIntent
+        val controller = Robolectric.buildActivity(IncomingCallActivity::class.java, intent).setup()
+        assertTrue(shadowOf(controller.get()).turnScreenOn)
+        assertTrue(shadowOf(controller.get()).showWhenLocked)
+        controller.pause().stop().destroy()
     }
 
     @Test fun lockedFlutterHandoffRetainsFullScreenIntentAndShowsActivityOverKeyguard() {

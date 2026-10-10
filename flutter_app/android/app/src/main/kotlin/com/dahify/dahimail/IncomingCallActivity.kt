@@ -109,6 +109,10 @@ class IncomingCallActivity : Activity() {
         super.onResume()
         if (!isFinishing && !minimizing) {
             visibleCallId = callId
+            getSharedPreferences("native_push", MODE_PRIVATE).edit()
+                .putString("last_wake_result", "call_screen_resumed").apply()
+            android.util.Log.i("DahimailPush", "Incoming call activity resumed")
+            IncomingCallWakeup.cancel(callId)
             IncomingCallOverlay.hide(callId)
         }
     }

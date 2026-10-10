@@ -58,7 +58,7 @@
         <div class="bg-surface-2 rounded-2xl border border-border fc-wrap" style="overflow:visible">
             <div class="flex items-center gap-3 px-4 py-3 border-b border-border">
                 <a href="<?php echo e(url('/people')); ?>" class="text-muted hover:text-ink" aria-label="<?php echo e(__('Back to Friends')); ?>">&larr;</a>
-                <a href="<?php echo e(url('/people/' . $friend->id)); ?>" class="flex items-center gap-3 min-w-0 flex-1" title="<?php echo e(__('Open profile')); ?>">
+                <a href="<?php echo e($friend->profileUrl()); ?>" class="flex items-center gap-3 min-w-0 flex-1" title="<?php echo e(__('Open profile')); ?>">
                     <div class="w-9 h-9 rounded-full bg-brand/10 text-brand flex items-center justify-center font-semibold overflow-hidden flex-shrink-0">
                         <?php if(\Livewire\Mechanisms\ExtendBlade\ExtendBlade::isRenderingLivewireComponent()): ?><!--[if BLOCK]><![endif]--><?php endif; ?><?php if($friend->avatar_path): ?><img src="<?php echo e(asset('storage/' . $friend->avatar_path)); ?>" alt="" class="w-full h-full object-cover"><?php else: ?><?php echo e(strtoupper(mb_substr($friend->name, 0, 1))); ?><?php endif; ?><?php if(\Livewire\Mechanisms\ExtendBlade\ExtendBlade::isRenderingLivewireComponent()): ?><!--[if ENDBLOCK]><![endif]--><?php endif; ?>
                     </div>
@@ -75,7 +75,7 @@
                 <div class="relative">
                     <button type="button" id="fc-menu-btn" class="p-2 text-muted hover:text-ink" aria-label="<?php echo e(__('More')); ?>" aria-haspopup="true">&#8942;</button>
                     <div id="fc-menu" class="hidden absolute right-0 mt-1 w-64 bg-surface-2 border border-border rounded-xl shadow-lg z-20 py-1 text-sm">
-                        <a href="<?php echo e(url('/people/' . $friend->id)); ?>" class="block px-4 py-2 hover:bg-black/5"><?php echo e(__('View profile')); ?></a>
+                        <a href="<?php echo e($friend->profileUrl()); ?>" class="block px-4 py-2 hover:bg-black/5"><?php echo e(__('View profile')); ?></a>
                         <a href="<?php echo e(url('/people/calls')); ?>" class="block px-4 py-2 hover:bg-black/5"><?php echo e(__('Call history')); ?></a>
                         <button type="button" id="fc-clear-me" class="block w-full text-left px-4 py-2 hover:bg-black/5"><?php echo e(__('Clear chat')); ?></button>
                     </div>
@@ -87,7 +87,7 @@
             
             <div id="fc-readonly" class="hidden px-4 py-3 border-t border-border text-sm text-muted flex flex-wrap items-center gap-3">
                 <span class="flex-1 min-w-0"><?php echo e(__('You are no longer friends, so you can read this chat but not write or call. Your history is kept.')); ?></span>
-                <a href="<?php echo e(url('/people/' . $friend->id)); ?>" class="btn-secondary"><?php echo e(__('View profile')); ?></a>
+                <a href="<?php echo e($friend->profileUrl()); ?>" class="btn-secondary"><?php echo e(__('View profile')); ?></a>
             </div>
 
             <div id="fc-replybar" class="hidden px-4 py-2 border-t border-border text-sm flex items-center gap-3">

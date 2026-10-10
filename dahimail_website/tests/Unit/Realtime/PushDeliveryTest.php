@@ -401,3 +401,35 @@ test('native iPhone calls do not wait on Firebase authentication', function () {
     app(FcmPush::class)->sendCall($this->user, ['call_id' => 42, 'sent_at' => time()]);
     Http::assertNothingSent();
 });
+
+test('device check sends a real data-only alert only on explicit request', function () {
+    Http::fake(['*' => Http::response(['name' => 'synthetic-message'], 200)]);
+    foreach ([false, true] as $send) {
+        $request = Illuminate\Http\Request::create('/api/v1/me/devices/check-push', 'POST', ['token' => 'synthetic-a', 'send_test' => $send]);
+        $request->setUserResolver(fn () => $this->user);
+        $response = app(App\Http\Controllers\Api\Mobile\MeController::class)->checkPush($request)->getData(true);
+        expect($response['test_sent'])->toBe($send);
+        Http::assertSent(fn ($out) => $out['message']['token'] === 'synthetic-a'
+            && ($send ? !isset($out['validate_only']) : $out['validate_only'] === true)
+            && $out['message']['data']['type'] === ($send ? 'push_test' : 'push_connection_check')
+            && !isset($out['message']['notification'])
+            && $out['message']['android']['priority'] === 'HIGH');
+    }
+});
+
+test('real test cannot target another users device or claim rejected delivery', function () {
+    Http::fake(['*' => Http::response(['error' => ['status' => 'UNAVAILABLE']], 503)]);
+    $request = Illuminate\Http\Request::create('/api/v1/me/devices/check-push', 'POST', ['token' => 'synthetic-a', 'send_test' => true]);
+    $request->setUserResolver(fn () => $this->user);
+    $controller = app(App\Http\Controllers\Api\Mobile\MeController::class);
+    expect($controller->checkPush($request)->getData(true)['test_sent'])->toBeFalse();
+    Http::fake();
+    $this->user->id = 2;
+    try {
+        $controller->checkPush($request);
+        $this->fail('Expected device ownership denial');
+    } catch (Symfony\Component\HttpKernel\Exception\HttpException $e) {
+        expect($e->getStatusCode())->toBe(404);
+    }
+    Http::assertNothingSent();
+});

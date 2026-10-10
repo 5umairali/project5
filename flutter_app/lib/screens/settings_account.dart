@@ -281,6 +281,7 @@ class _NotificationPrefsPageState extends State<NotificationPrefsPage> {
               Expanded(child: Center(child: Text('Slack', style: TextStyle(fontSize: 12, color: AppColors.muted)))),
             ])),
             for (final e in _events.entries)
+              if (e.key != 'billingAlerts' || context.watch<Session>().billingEnabled)
               Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Row(children: [
                 Expanded(flex: 2, child: Text(e.value, style: const TextStyle(fontSize: 13))),
                 cell(e.key, 'email'),
@@ -532,7 +533,7 @@ class _AutoReplyPageState extends State<AutoReplyPage> {
           child: Row(children: [
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('${r['name']}', style: const TextStyle(fontWeight: FontWeight.w700)),
-              Text('${(r['keywords'] as List? ?? []).join(', ')}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+              Text((r['keywords'] as List? ?? []).join(', '), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.muted, fontSize: 12)),
               Text('${r['channel']} · priority ${r['priority']} · used ${r['usage_count']}×', style: const TextStyle(color: AppColors.muted, fontSize: 12)),
             ])),
             Switch(value: r['is_active'] == true, activeThumbColor: AppColors.primary, onChanged: (_) async {

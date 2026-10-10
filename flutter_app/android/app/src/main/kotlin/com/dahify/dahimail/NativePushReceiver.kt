@@ -58,7 +58,7 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
         }
         val foreground = isAppVisible(context)
         if (foreground) recordResult(context, "foreground")
-        if (!foreground && (type == "call" || data["notification_layout"] == "v2")) {
+        if (!foreground && type != "call_cancel" && (type == "call" || !data["title"].isNullOrBlank())) {
             try {
                 val shown = if (type == "call") showCall(context, data) else showAlert(context, data)
                 if (shown) intent.putExtra("dm_native_shown", "1")
@@ -127,7 +127,7 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
             context.getSharedPreferences("native_push", Context.MODE_PRIVATE).edit().putBoolean("minimized_$id", minimized).apply()
         }
 
-        internal fun minimizeCall(context: Context, data: Map<String, String>) {
+        @Synchronized internal fun minimizeCall(context: Context, data: Map<String, String>) {
             val id = data["call_id"]?.toIntOrNull() ?: return
             if (callExpiry(context, id) <= System.currentTimeMillis()) return
             setMinimized(context, id, true)
@@ -154,7 +154,7 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
             IncomingCallOverlay.hide(id)
         }
 
-        internal fun dismissCall(context: Context, id: Int) {
+        @Synchronized internal fun dismissCall(context: Context, id: Int) {
             context.getSharedPreferences("native_push", Context.MODE_PRIVATE).edit()
                 .remove("ringing_$id").remove("minimized_$id").putLong("cancelled_$id", System.currentTimeMillis()).apply()
             DeviceSounds.stopIncoming(id)
@@ -225,21 +225,30 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
             manager.createNotificationChannel(channel)
         }
 
-        @Suppress("DEPRECATION")
-        private fun wakeForIncomingCall(context: Context) {
-            val power = context.getSystemService(PowerManager::class.java)
-            if (power.isInteractive) return
-            if (Build.VERSION.SDK_INT >= 34 && !context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()) return
-            try {
-                // Briefly wake the display for the permitted full-screen Activity.
-                // This does not dismiss or unlock the keyguard.
-                val wake = power.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "Dahimail:incoming")
-                wake.acquire(3000)
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (wake.isHeld) wake.release() }, 3000)
-            } catch (_: SecurityException) { /* setTurnScreenOn remains the system-supported Activity path. */ }
+        /** Firebase may allow service creation but reject its later foreground promotion. */
+        @Synchronized internal fun useSystemRingtone(context: Context, callId: Int) {
+            val remaining = callExpiry(context, callId) - System.currentTimeMillis()
+            if (remaining <= 0) return
+            val manager = context.getSystemService(NotificationManager::class.java)
+            val current = manager.activeNotifications.firstOrNull { it.id == 100000 + callId }?.notification ?: return
+            val fallbackChannel = "dm_calls_fallback_v1"
+            channel(context, true, fallbackChannel)
+            // Respect both the original call channel and the fallback channel settings.
+            if (!canPost(context, CALL_CHANNEL) || !canPost(context, fallbackChannel)) return
+            val builder = NotificationCompat.Builder(context, current)
+                .setOnlyAlertOnce(false) // The previous post used a silent channel.
+                .setChannelId(fallbackChannel)
+                .setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE))
+                .setTimeoutAfter(remaining.coerceAtMost(45000))
+            if (isMinimized(context, callId)) builder.setFullScreenIntent(null, false)
+            manager.notify(100000 + callId, builder.build().apply {
+                flags = flags or android.app.Notification.FLAG_INSISTENT
+            })
+            DeviceSounds.stopIncoming(callId)
+            recordResult(context, "posted_call_system_ringtone")
         }
 
-        internal fun showCall(context: Context, data: Map<String, String>): Boolean {
+        @Synchronized internal fun showCall(context: Context, data: Map<String, String>): Boolean {
             val callId = data["call_id"]?.toIntOrNull() ?: return false
             val sent = data["sent_at"]?.toLongOrNull() ?: return false
             val postedAt = System.currentTimeMillis()
@@ -292,30 +301,34 @@ open class NativePushReceiver : FlutterFirebaseMessagingReceiver() {
             val notification = builder.build().apply { flags = flags or android.app.Notification.FLAG_INSISTENT }
             val manager = context.getSystemService(NotificationManager::class.java)
             preferences.edit().putLong("ringing_$callId", postedAt + remaining.coerceAtMost(45000)).apply()
-            if (!minimized) wakeForIncomingCall(context)
+            // Let Android evaluate the sleeping/locked state before waking the display.
+            // IncomingCallActivity uses setTurnScreenOn + setShowWhenLocked. A wake
+            // lock here can turn a screen-off full-screen call into a heads-up banner.
             manager.notify(id, notification)
             recordResult(context, "posted_call")
             if (minimized) minimizeCall(context, data)
             // Own ringtone lifetime independently of Activity/notification focus.
             DeviceSounds.startIncoming(context, callId, callExpiry(context, callId))
             if (!IncomingCallService.present(context, data)) {
-                DeviceSounds.stopIncoming(callId)
-                // If Android denies foreground service startup, retain audible
-                // system notification delivery instead of leaving a silent call.
-                channel(context, true, "dm_calls_fallback_v1")
-                builder.setChannelId("dm_calls_fallback_v1")
-                    .setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE))
-                manager.notify(id, builder.build().apply { flags = flags or android.app.Notification.FLAG_INSISTENT })
+                useSystemRingtone(context, callId)
             }
             val avatar = data["caller_avatar"].orEmpty()
             if (avatar.startsWith("https://")) images.execute {
                 val bitmap = fetchAvatar(avatar) ?: return@execute
-                val timeout = remaining - (System.currentTimeMillis() - postedAt)
-                if (timeout <= 0 || manager.activeNotifications.none { it.id == id }) return@execute
-                builder.setFullScreenIntent(if (isMinimized(context, callId)) null else fullScreen, true).setLargeIcon(bitmap).setOnlyAlertOnce(true).setTimeoutAfter(timeout.coerceAtMost(45000))
-                if (Build.VERSION.SDK_INT >= 31) builder.setStyle(NotificationCompat.CallStyle.forIncomingCall(
-                    Person.Builder().setName(name).setIcon(IconCompat.createWithBitmap(bitmap)).setImportant(true).build(), decline, accept).setIsVideo(video))
-                manager.notify(id, builder.build().apply { flags = flags or android.app.Notification.FLAG_INSISTENT })
+                // Serialize image updates with cancellation and ringtone fallback.
+                synchronized(this) {
+                    val timeout = remaining - (System.currentTimeMillis() - postedAt)
+                    if (timeout <= 0) return@execute
+                    val current = manager.activeNotifications.firstOrNull { it.id == id }?.notification ?: return@execute
+                    // Foreground service promotion can fail after the initial post.
+                    // An avatar must not restore the original silent channel afterwards.
+                    if (Build.VERSION.SDK_INT >= 26) builder.setChannelId(current.channelId)
+                    else builder.setSound(current.sound)
+                    builder.setFullScreenIntent(if (isMinimized(context, callId)) null else fullScreen, true).setLargeIcon(bitmap).setOnlyAlertOnce(true).setTimeoutAfter(timeout.coerceAtMost(45000))
+                    if (Build.VERSION.SDK_INT >= 31) builder.setStyle(NotificationCompat.CallStyle.forIncomingCall(
+                        Person.Builder().setName(name).setIcon(IconCompat.createWithBitmap(bitmap)).setImportant(true).build(), decline, accept).setIsVideo(video))
+                    manager.notify(id, builder.build().apply { flags = flags or android.app.Notification.FLAG_INSISTENT })
+                }
             }
             return true
         }

@@ -38,6 +38,13 @@ import WebRTC
       GeneratedPluginRegistrant.register(with: registry)
     }
     UNUserNotificationCenter.current().delegate = self
+    // Register before Dart starts, including launches caused by remote actions.
+    let view = UNNotificationAction(identifier: "notification_view", title: "View", options: [.foreground])
+    let reply = UNTextInputNotificationAction(identifier: "notification_reply", title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Write a reply")
+    UNUserNotificationCenter.current().setNotificationCategories([
+      UNNotificationCategory(identifier: "MESSAGE_VIEW", actions: [view], intentIdentifiers: [], options: []),
+      UNNotificationCategory(identifier: "MESSAGE_REPLY", actions: [view, reply], intentIdentifiers: [], options: [])
+    ])
     setupCallKit()
     setupPushKit()
     application.registerForRemoteNotifications() // APNs token for normal pushes (needed before Firebase can give a token)
@@ -132,7 +139,9 @@ import WebRTC
   }
 
   func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
+    guard type == .voIP else { return }
     voipToken = nil
+    emit("voipToken", ["token": "", "sandbox": isSandbox])
   }
 
   func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
@@ -151,8 +160,8 @@ import WebRTC
     let name = str(d["caller_name"]).isEmpty ? "Dahimail" : str(d["caller_name"])
     let isVideo = str(d["video"]) == "1" && str(d["audio_only"]) != "1"
     let sent = Double(str(d["sent_at"])) ?? 0
-    let ttl = Double(str(d["ttl"])) ?? 45
-    let remaining = sent > 0 ? ttl - (Date().timeIntervalSince1970 - sent) : ttl
+    let ttl = min(45, max(0, Double(str(d["ttl"])) ?? 45))
+    let remaining = min(ttl, sent > 0 ? ttl - (Date().timeIntervalSince1970 - sent) : ttl)
     let stale = remaining <= 0   // the phone was off / offline: a "ghost" call
 
     let info: [String: Any] = [
@@ -173,10 +182,16 @@ import WebRTC
     update.supportsGrouping = false
     update.supportsUngrouping = false
     update.supportsDTMF = false
-    calls[uuid] = info
+    // APNs may redeliver the same invitation. Still report every VoIP push,
+    // but a duplicate-report error must not erase the original active call.
+    let duplicate = calls[uuid] != nil
+    if !duplicate { calls[uuid] = info }
+    guard let provider = provider else { completion(); return }
 
-    provider?.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+    provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
       guard let self = self else { completion(); return }
+      defer { completion() }
+      if duplicate { return }
       if error != nil {
         self.calls[uuid] = nil           // e.g. Do Not Disturb filtered it, or the same call was reported twice
       } else if stale {
@@ -192,7 +207,6 @@ import WebRTC
           self.emit("callEnded", info.merging(["answered": false, "timeout": true]) { $1 })
         }
       }
-      completion()
     }
   }
 

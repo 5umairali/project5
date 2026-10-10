@@ -349,7 +349,7 @@ class _ScheduleMeetingPageState extends State<_ScheduleMeetingPage> {
         ]),
         const SizedBox(height: 12),
         DropdownButtonFormField<int>(
-          value: _duration,
+          initialValue: _duration,
           decoration: const InputDecoration(labelText: 'Length'),
           items: [for (final m in const [15, 30, 45, 60, 90, 120, 180]) DropdownMenuItem(value: m, child: Text(m < 60 ? '$m minutes' : (m % 60 == 0 ? '${m ~/ 60} hour${m == 60 ? '' : 's'}' : '${m ~/ 60} h ${m % 60} min')))],
           onChanged: (v) => setState(() => _duration = v ?? 60),

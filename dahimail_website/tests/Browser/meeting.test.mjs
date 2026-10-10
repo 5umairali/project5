@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 const source = readFileSync(new URL('../../public/js/meeting.js', import.meta.url), 'utf8')
-  .replace('  bind();\n  initPre();', '  window.mediaTest = { acquire: acquire, showEnd: showEnd, leave: leave, poll: poll, endForAll: endForAll, queueSignal: queueSignal };');
+  .replace('  bind();\n  initPre();', '  window.mediaTest = { acquire: acquire, showEnd: showEnd, leave: leave, poll: poll, endForAll: endForAll, queueSignal: queueSignal, makePeer: makePeer };');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function room(search, recordingDone = Promise.resolve(), mediaDevices, fetch = async () => ({ status: 200, json: async () => ({}) })) {
   const elements = new Map(), redirects = [], events = new Map();
@@ -13,10 +13,18 @@ function room(search, recordingDone = Promise.resolve(), mediaDevices, fetch = a
     return elements.get(id);
   };
   class Stream { getTracks() { return []; } addTrack() {} }
+  class PeerConnection {
+    constructor() { this.transceivers = []; }
+    addTransceiver(track, options) {
+      const sender = { getParameters: () => ({ encodings: [] }), setParameters: async () => {}, replaceTrack: async () => {} };
+      this.transceivers.push({ track, options, sender });
+      return { sender };
+    }
+  }
   const window = { addEventListener(name, fn) { events.set(name, fn); }, DahiRec: { init() {}, stop: () => recordingDone } };
   const document = { getElementById: element, addEventListener() {}, querySelector: element, createElement: element };
   const location = { origin: 'https://mail.example', search, assign: url => redirects.push(url) };
-  vm.runInNewContext(source, { window, document, navigator: { mediaDevices }, location, MediaStream: Stream,
+  vm.runInNewContext(source, { window, document, navigator: { mediaDevices }, location, MediaStream: Stream, RTCPeerConnection: PeerConnection,
     fetch, URL, URLSearchParams, Promise, Date, Set, clearTimeout() {}, setInterval() {}, clearInterval() {}, setTimeout() {} });
   return { api: window.mediaTest, state: window.__meeting.S, events, redirects, elements };
 }
@@ -103,4 +111,31 @@ test('socket ICE is consumed without a REST round trip and replay is deduplicate
   r.events.get('dahi:sync')({ detail: { type: 'meeting_signal', code: 'test', to: 7, signal } });
   await flush(); r.api.queueSignal(signal); await flush();
   assert.equal(candidates, 1); assert.equal(polls, 0); assert.equal(r.state.sigLast, 0);
+});
+
+test('browser senders associate audio and video with the same stream for mobile receivers', () => {
+  const r = room('');
+  const local = { id: 'browser-stream' };
+  r.state.local = local;
+  r.state.audioTrack = { kind: 'audio' };
+  r.state.videoTrack = { kind: 'video' };
+  const peer = r.api.makePeer(8);
+  assert.equal(peer.pc.transceivers.length, 2);
+  for (const transceiver of peer.pc.transceivers) {
+    assert.equal(transceiver.options.direction, 'sendrecv');
+    assert.equal(transceiver.options.streams.length, 1);
+    assert.equal(transceiver.options.streams[0], local);
+  }
+});
+
+test('camera-off and screen-sharing senders retain a stream association', () => {
+  const r = room('');
+  const initial = r.api.makePeer(8);
+  assert.equal(initial.pc.transceivers[1].track, 'video');
+  assert.equal(initial.pc.transceivers[1].options.streams[0], r.state.local);
+  r.state.sharing = true;
+  r.state.screenTrack = { kind: 'video', id: 'screen-track' };
+  const sharing = r.api.makePeer(9);
+  assert.equal(sharing.pc.transceivers[1].track, r.state.screenTrack);
+  assert.equal(sharing.pc.transceivers[1].options.streams[0], r.state.local);
 });

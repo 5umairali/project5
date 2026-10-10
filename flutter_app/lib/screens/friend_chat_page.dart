@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
@@ -263,10 +262,12 @@ class _FriendChatPageState extends State<FriendChatPage> with ConversationVisibi
     try {
       final j = await Api.of(context).post('friends/$_id/messages/${m['id']}/react', {'emoji': emoji});
       final fresh = Api.obj(j);
-      if (mounted && fresh.isNotEmpty) setState(() {
+      if (mounted && fresh.isNotEmpty) {
+        setState(() {
         final i = _msgs.indexWhere((x) => x['id'] == m['id']);
         if (i >= 0) _msgs[i] = fresh;
       });
+      }
     } on ApiException catch (e) {
       if (mounted) toast(context, e.message, error: true);
     }
@@ -605,9 +606,6 @@ class _FriendChatPageState extends State<FriendChatPage> with ConversationVisibi
   void _openProfile() => pushPage(context, PersonProfilePage(userId: _id));
 
   // ── drawing ──
-  bool _isImage(Map f) => RegExp(r'^image/(jpeg|png|gif|webp)$', caseSensitive: false).hasMatch('${f['mime'] ?? ''}');
-  bool _isVideo(Map f) => RegExp(r'^video/(mp4|webm|quicktime|3gpp)$', caseSensitive: false).hasMatch('${f['mime'] ?? ''}');
-  String _size(int n) => n < 1024 ? '$n B' : (n < 1048576 ? '${(n / 1024).round()} KB' : '${(n / 1048576).toStringAsFixed(1)} MB');
   String _mmss(int s) => '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
 
   Widget _quote(Map r, bool mine, Color fg) => Container(

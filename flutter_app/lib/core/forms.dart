@@ -182,7 +182,7 @@ class FormBodyState extends State<FormBody> {
         return Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: DropdownButtonFormField<String>(
-            value: _v[f.key] as String?,
+            initialValue: _v[f.key] as String?,
             isExpanded: true,
             decoration: InputDecoration(labelText: f.label, helperText: f.help, errorText: err),
             items: [for (final o in f.options) DropdownMenuItem(value: o.$1, child: Text(o.$2, overflow: TextOverflow.ellipsis))],

@@ -23,6 +23,15 @@ void main() {
     expect(registered.message, contains('try a real call'));
   });
 
+  test('older registration responses leave configuration unknown without blaming credentials', () {
+    final state = PushConnectionStatus.fromRegistration({'message': 'Device registered.'});
+    expect(state.code, 'server_status_unknown');
+    expect(state.registered, isFalse);
+    expect(state.voipConfigured, isNull);
+    expect(state.message, contains('Check connection'));
+    expect(state.message, isNot(contains('credentials are missing')));
+  });
+
   test('server push failures give distinct actionable messages', () {
     const failures = {
       'provider_dns_error': 'DNS',

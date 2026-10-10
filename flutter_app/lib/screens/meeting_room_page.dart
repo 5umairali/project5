@@ -85,7 +85,7 @@ class _MeetingRoomPageState extends State<MeetingRoomPage> {
   int? get _leftSeconds {
     if (_e.meeting['kind'] == 'call') return null;
     final ends = DateTime.tryParse('${_e.meeting['ends_at'] ?? ''}');
-    return ends == null ? null : ends.difference(DateTime.now()).inSeconds;
+    return ends?.difference(DateTime.now()).inSeconds;
   }
 
   String _fmt(int s) {
@@ -365,7 +365,7 @@ class _MeetingRoomPageState extends State<MeetingRoomPage> {
     final me = p['is_me'] == true;
     final pid = (p['pid'] as num).toInt();
     final peer = _e.peers[pid];
-    final videoOn = me ? (_e.camOn && _e.hasVideoTrack) : (p['video'] == true && (peer?.hasStream ?? false));
+    final videoOn = me ? (_e.camOn && _e.hasVideoTrack) : (p['video'] == true && (peer?.hasVideo ?? false));
     final name = '${p['name']}${me ? ' (You)' : ''}';
     final audioOn = me ? _e.micOn : p['audio'] == true;
     final renderer = me ? _e.localRenderer : peer?.renderer;

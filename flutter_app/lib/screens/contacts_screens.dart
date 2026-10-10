@@ -606,7 +606,8 @@ class _DupGroupState extends State<_DupGroup> {
     final contacts = Api.list(widget.group['contacts']);
     _primary ??= contacts.isEmpty ? null : contacts.first['id'] as int;
     return AppCard(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: RadioGroup<int>(groupValue: _primary, onChanged: (v) => setState(() => _primary = v),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('${widget.group['match_value']}', style: const TextStyle(fontWeight: FontWeight.w700)),
         const Text('Choose the contact to keep', style: TextStyle(fontSize: 12, color: AppColors.muted)),
         for (final c in contacts)
@@ -614,9 +615,7 @@ class _DupGroupState extends State<_DupGroup> {
             contentPadding: EdgeInsets.zero,
             dense: true,
             value: c['id'] as int,
-            groupValue: _primary,
             activeColor: AppColors.primary,
-            onChanged: (v) => setState(() => _primary = v),
             title: Text(contactName(c)),
             subtitle: Text([pick(c, ['company']), pick(c, ['phone']), 'score ${c['lead_score'] ?? 0}'].where((e) => e.isNotEmpty).join(' · ')),
           ),
@@ -633,7 +632,7 @@ class _DupGroupState extends State<_DupGroup> {
             child: const Text('Merge'),
           ),
         ),
-      ]),
+      ])),
     );
   }
 }

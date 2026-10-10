@@ -363,7 +363,7 @@ class _TeamPageState extends State<TeamPage> {
                     subtitle: '${m['email']}',
                     badge: '${m['role']}',
                     onTap: (m['is_me'] == true || m['role'] == 'owner' || (me != 'owner')) ? null : () => actionSheet(c, '${m['name']}', [
-                          for (final r in ['admin', 'agent', 'viewer'].where((r) => r != m['role'])) SheetAction('Make ${r}', Icons.swap_horiz_rounded, () async {
+                          for (final r in ['admin', 'agent', 'viewer'].where((r) => r != m['role'])) SheetAction('Make $r', Icons.swap_horiz_rounded, () async {
                             await run(c, (a) => a.put('team/members/${m['id']}/role', {'role': r}), ok: 'Role updated');
                             reload();
                           }),
@@ -414,7 +414,9 @@ class _BillingPageState extends State<BillingPage> {
   String _cycle = 'monthly';
 
   @override
-  Widget build(BuildContext context) => AsyncView<Map<String, dynamic>>(
+  Widget build(BuildContext context) => !context.watch<Session>().billingEnabled
+      ? const Center(child: Text('All features are free and unlimited.'))
+      : AsyncView<Map<String, dynamic>>(
         load: (api) async => Api.obj(await api.get('billing')),
         builder: (c, d, reload) {
           final sub = d['subscription'] is Map ? d['subscription'] as Map : null;
@@ -601,7 +603,7 @@ class _WorkspaceOverviewPageState extends State<WorkspaceOverviewPage> {
         SectionHeader('Workspace', trailing: TextButton(onPressed: _create, child: const Text('New workspace'))),
         MenuGroup(children: [
           _activeRow(),
-          for (final r in _manage) MenuRow(icon: r.$4, title: r.$2, subtitle: r.$3, chevron: true, onTap: () => widget.onOpen(r.$1)),
+          for (final r in _manage) if (r.$1 != 'ws_billing' || context.watch<Session>().billingEnabled) MenuRow(icon: r.$4, title: r.$2, subtitle: r.$3, chevron: true, onTap: () => widget.onOpen(r.$1)),
           for (final w in others)
             ListRow(
               leading: Avatar('${w['name']}', url: w['logo_url'] as String?),
@@ -696,7 +698,7 @@ class IntegrationsPage extends StatefulWidget {
 }
 
 class _IntegrationsPageState extends State<IntegrationsPage> {
-  int _v = 0;
+  final int _v = 0;
   static const _oauth = {'slack': '/integrations/slack/redirect', 'salesforce': '/integrations/salesforce/redirect', 'google_calendar': '/integrations/google-calendar/redirect'};
   static const _icons = {'slack': Icons.tag_rounded, 'stripe': Icons.credit_card_rounded, 'zapier': Icons.bolt_rounded, 'salesforce': Icons.cloud_rounded, 'hubspot': Icons.hub_rounded, 'google_calendar': Icons.event_rounded};
 

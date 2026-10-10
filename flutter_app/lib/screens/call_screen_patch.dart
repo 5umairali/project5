@@ -8,7 +8,6 @@
 // ============================================================================
 
 import 'package:flutter/material.dart';
-import '../core/calls.dart';
 import '../core/room_host.dart'; // or whatever hosts the minimize logic
 
 /// Example of the required PopScope wrapper.

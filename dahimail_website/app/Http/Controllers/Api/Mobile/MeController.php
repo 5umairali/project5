@@ -343,13 +343,16 @@ class MeController extends Controller
         ]);
     }
 
-    /** Validate the signed-in device with Firebase without sending a notification. */
+    /** Check only the authenticated device; sending a real alert requires explicit opt-in. */
     public function checkPush(Request $request): JsonResponse
     {
-        $data = $request->validate(['token' => 'required|string|max:500']);
+        $data = $request->validate(['token' => 'required|string|max:500', 'send_test' => 'sometimes|boolean']);
         $device = DB::table('device_tokens')->where('user_id', $request->user()->id)->where('token', $data['token'])->first();
         abort_unless($device, 404);
-        return response()->json(app(\App\Services\FcmPush::class)->probeToken($device->token, $device->platform));
+        $push = app(\App\Services\FcmPush::class);
+        $send = $request->boolean('send_test');
+        $result = $send ? $push->testToken($device->token, $device->platform) : $push->probeToken($device->token, $device->platform);
+        return response()->json($result + ['test_sent' => $send && ($result['accepted'] ?? false)]);
     }
 
     public function unregisterDevice(Request $request): JsonResponse

@@ -248,7 +248,7 @@ class _ComposePageState extends State<ComposePage> {
       if (isEmail && !_isReply && _accounts.length > 1) ...[
         const SizedBox(height: 10),
         DropdownButtonFormField<int>(
-          value: _from,
+          initialValue: _from,
           decoration: const InputDecoration(labelText: 'From'),
           items: [for (final a in _accounts) DropdownMenuItem<int>(value: a['id'] as int?, child: Text('${a['email']}', overflow: TextOverflow.ellipsis))],
           onChanged: (v) => setState(() => _from = v),

@@ -24,7 +24,6 @@ import '../screens/contacts_screens.dart';
 import '../screens/inbox_screens.dart';
 import '../screens/misc_screens.dart';
 import '../screens/people_screens.dart';
-import '../screens/settings_account.dart';
 
 /// App frame:
 ///  • Header : ☰ menu · title · search · notifications · profile
@@ -99,6 +98,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver impleme
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
     if (s == AppLifecycleState.paused) _pausedAt = DateTime.now();
+    if (s == AppLifecycleState.resumed && mounted) {
+      context.read<Session>().refreshMe();
+      AppPermissions.setupAfterSignIn(context);
+    }
     if (s == AppLifecycleState.resumed && mounted && DateTime.now().difference(_pausedAt).inSeconds > 60) {
       AppRefresh.bump();
       Api.prefetch(context.read<Session>());

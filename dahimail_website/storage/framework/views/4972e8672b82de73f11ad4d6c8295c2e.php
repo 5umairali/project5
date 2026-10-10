@@ -4,6 +4,27 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="csrf-token" content="<?php echo e(csrf_token()); ?>">
+    <?php if(\Livewire\Mechanisms\ExtendBlade\ExtendBlade::isRenderingLivewireComponent()): ?><!--[if BLOCK]><![endif]--><?php endif; ?><?php if(auth()->guard()->check()): ?>
+    <meta name="dahi-realtime" content="<?php echo e(json_encode([
+        'user' => auth()->id(), 'workspace' => auth()->user()->active_workspace_id,
+        'key' => config('broadcasting.default') === 'pusher' ? config('broadcasting.connections.pusher.key') : null,
+        'cluster' => config('broadcasting.connections.pusher.options.cluster', 'mt1'),
+        'host' => config('services.realtime.ws_host'), 'port' => config('services.realtime.ws_port', 443),
+        'tls' => config('services.realtime.ws_scheme', 'https') === 'https', 'auth' => url('/broadcasting/auth'),
+    ])); ?>">
+    <?php endif; ?><?php if(\Livewire\Mechanisms\ExtendBlade\ExtendBlade::isRenderingLivewireComponent()): ?><!--[if ENDBLOCK]><![endif]--><?php endif; ?>
+    <?php
+        // Polling in meeting.js remains available during an incomplete asset deployment.
+        // A missing optional websocket bundle must not make the call room return HTTP 500.
+        $realtimeAssets = '';
+        try {
+            $realtimeAssets = app(\Illuminate\Foundation\Vite::class)('resources/js/realtime.js');
+        } catch (\Illuminate\Foundation\ViteException $error) {
+            \Illuminate\Support\Facades\Log::warning('Meeting realtime assets unavailable; rebuild website assets with npm ci && npm run build.', ['exception' => get_class($error)]);
+        }
+    ?>
+    <?php echo $realtimeAssets; ?>
+
     <title><?php echo e($meeting['title']); ?> · <?php echo e(config('app.name')); ?></title>
     <style>
         :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --ink:#f2f4f8; --muted:#9aa3b2; --brand:#4F46E5; --red:#dc2626; --green:#16a34a; }
@@ -114,7 +135,7 @@
     <div id="mt-toasts"></div>
 </div>
 <script src="<?php echo e(asset('js/call-recorder.js')); ?>?v=20261007"></script>
-<script src="<?php echo e(asset('js/meeting.js')); ?>?v=20261007"></script>
+<script src="<?php echo e(asset('js/meeting.js')); ?>?v=20261010-streams"></script>
 </body>
 </html>
 <?php /**PATH /home/dahimail.com/public_html/resources/views/meetings/room.blade.php ENDPATH**/ ?>

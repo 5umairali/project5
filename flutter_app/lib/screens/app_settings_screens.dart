@@ -14,6 +14,9 @@ import '../core/app_permissions.dart';
 import '../core/device_env.dart';
 import '../core/native_calls.dart';
 import '../core/prefs.dart';
+import '../core/push.dart';
+import '../core/push_status.dart';
+import '../core/push_receipt.dart';
 import '../core/sounds.dart';
 import '../core/theme.dart';
 import '../core/util.dart';
@@ -91,6 +94,7 @@ class DeviceNotificationsPage extends StatefulWidget {
 class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with WidgetsBindingObserver {
   bool? _allowed;
   bool? _fullScreen;
+  String? _lastReceipt, _deliveryDetails;
 
   @override
   void initState() {
@@ -113,7 +117,9 @@ class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with 
   Future<void> _check() async {
     final a = await NotifyService.I.allowed();
     final fullScreen = await DeviceEnv.canFullScreenIntent();
-    if (mounted) setState(() { _allowed = a; _fullScreen = fullScreen; });
+    final receipt = await PushReceipt.lastReceived();
+    final details = await DeviceEnv.notificationDiagnostics();
+    if (mounted) setState(() { _allowed = a; _fullScreen = fullScreen; _lastReceipt = receipt; _deliveryDetails = details; });
   }
 
   Future<void> _batterySettings(BuildContext context) async {
@@ -160,6 +166,31 @@ class _DeviceNotificationsPageState extends State<DeviceNotificationsPage> with 
             FilledButton(onPressed: _allow, child: const Text('Allow notifications')),
           ]),
         ),
+      const SectionHeader('Background calls and messages'),
+      AppCard(child: ValueListenableBuilder<PushConnectionStatus>(
+        valueListenable: PushService.I.status,
+        builder: (context, status, _) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(status.message),
+          if (status.needsMigration) const Text('The website administrator must run the pending database migrations.'),
+          if (Platform.isIOS && status.voipConfigured == false)
+            const Text('The website must configure Apple incoming-call delivery.'),
+          const SizedBox(height: 8),
+          FilledButton.icon(
+            onPressed: status.busy ? null : () async {
+              await PushService.I.checkConnection(Api.of(context));
+              if (mounted) await _check();
+            },
+            icon: const Icon(Icons.sync), label: Text(status.busy ? 'Connecting…' : 'Check connection'),
+          ),
+          Text(_lastReceipt == null ? 'No remote push received yet.'
+            : 'Last remote push: ${DateTime.tryParse(_lastReceipt!)?.toLocal() ?? _lastReceipt}'),
+          if (_deliveryDetails != null) ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: const Text('Phone delivery details'),
+            children: [Text(_deliveryDetails!)],
+          ),
+        ]),
+      )),
       const SectionHeader('Phone permissions'),
       AppCard(padding: EdgeInsets.zero, child: Column(children: [
         ListTile(leading: const Icon(Icons.notifications_outlined), title: const Text('Phone notification settings'),

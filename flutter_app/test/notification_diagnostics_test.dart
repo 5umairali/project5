@@ -2,6 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dahimail/core/device_env.dart';
 
 void main() {
+  test('system ringtone fallback reports native receipt instead of no result', () {
+    final text = DeviceEnv.describeNotificationDiagnostics({'enabled': true, 'last_result': 'posted_call_system_ringtone', 'call_importance': 4, 'channel_importance': 4});
+    expect(text, contains('system ringtone fallback'));
+    expect(text, isNot(contains('No native push result')));
+  });
+
   test('diagnostics distinguish Android permission from silent channel', () {
     final text = DeviceEnv.describeNotificationDiagnostics({'enabled': false, 'last_result': 'notifications_blocked', 'call_importance': 0, 'channel_importance': 2});
     expect(text, contains('Blocked by Android notification permission'));

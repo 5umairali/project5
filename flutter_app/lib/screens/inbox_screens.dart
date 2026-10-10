@@ -908,24 +908,21 @@ class _ConversationDetailPageState extends State<ConversationDetailPage> with Co
     final text = _full[id] ?? '${m['body_text'] ?? ''}';
     final long = _full[id] == null && (_html[id] ?? '').isEmpty && text.length >= 495;
     final atts = (m['attachments'] as List? ?? []).whereType<Map>().toList();
-    // Formatted e-mails (newsletters, receipts, replies with images) get a full-width WHITE card – they are designed for a
-    // white page, so text and pictures stay readable in dark mode too. Plain text / chat messages keep the bubble look.
-    const hasHtml = false; // e-mail bodies are shown by the e-mail reader (browser view), not in bubbles
-    final bg = note ? const Color(0xFFFFF4CC) : (hasHtml ? Colors.white : (out ? AppColors.primary : Theme.of(c).colorScheme.surface));
-    final fg = note ? AppColors.ink : (hasHtml ? const Color(0xFF1F1F29) : (out ? Colors.white : null));
+    // HTML e-mails are rendered in the separate reader; these are text bubbles.
+    final bg = note ? const Color(0xFFFFF4CC) : (out ? AppColors.primary : Theme.of(c).colorScheme.surface);
+    final fg = note ? AppColors.ink : (out ? Colors.white : null);
     return Align(
-      alignment: hasHtml ? Alignment.topCenter : (out ? Alignment.centerRight : Alignment.centerLeft),
+      alignment: out ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(12),
-        constraints: BoxConstraints(maxWidth: hasHtml ? double.infinity : MediaQuery.of(c).size.width * 0.86),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(c).size.width * 0.86),
         decoration: BoxDecoration(
           color: bg,
-          border: hasHtml ? Border.all(color: AppColors.borderOf(c)) : null,
-          borderRadius: hasHtml ? BorderRadius.circular(16) : BorderRadius.only(topLeft: const Radius.circular(16), topRight: const Radius.circular(16), bottomLeft: Radius.circular(out ? 16 : 4), bottomRight: Radius.circular(out ? 4 : 16)),
+          borderRadius: BorderRadius.only(topLeft: const Radius.circular(16), topRight: const Radius.circular(16), bottomLeft: Radius.circular(out ? 16 : 4), bottomRight: Radius.circular(out ? 4 : 16)),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(note ? 'Internal note · ${m['sender_name']}' : '${m['sender_name'] ?? ''}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: out && !note && !hasHtml ? Colors.white70 : AppColors.primary)),
+          Text(note ? 'Internal note · ${m['sender_name']}' : '${m['sender_name'] ?? ''}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: out && !note ? Colors.white70 : AppColors.primary)),
           if ('${m['subject'] ?? ''}'.isNotEmpty && !out && '${m['subject']}' != '${_conv['subject']}') Text('${m['subject']}', style: TextStyle(fontWeight: FontWeight.w600, color: fg)),
           const SizedBox(height: 4),
           SelectableText(text, style: TextStyle(color: fg, height: 1.35)),

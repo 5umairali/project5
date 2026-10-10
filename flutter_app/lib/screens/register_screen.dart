@@ -46,10 +46,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.initState();
     PublicApi.send('GET', 'auth/phone-config').then((r) {
       final d = r.body is Map ? (r.body as Map)['data'] : null;
-      if (mounted && d is Map) setState(() {
+      if (mounted && d is Map) {
+        setState(() {
         _phoneMode = '${d['registration'] ?? 'optional'}';
         _policy = CredentialPolicy.from(d['credential_policy']);
       });
+      }
     });
   }
 

@@ -1,6 +1,5 @@
 import 'dart:io' show Platform;
 import 'package:flutter/services.dart';
-import 'api.dart';
 import 'calls.dart';
 import 'notify.dart';
 import 'push.dart';

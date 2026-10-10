@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/api.dart';
 import '../core/calls.dart';
-import '../core/paged.dart';
 import '../core/theme.dart';
 import '../core/util.dart';
 import '../core/widgets.dart';
@@ -19,7 +18,7 @@ class PersonProfilePage extends StatefulWidget {
 }
 
 class _PersonProfilePageState extends State<PersonProfilePage> {
-  int _v = 0;
+  final int _v = 0;
 
   Future<void> _clear(Map<String, dynamic> p) async {
     final name = '${p['name']}';
@@ -86,7 +85,7 @@ class _PersonProfilePageState extends State<PersonProfilePage> {
                     GestureDetector(onTap: () => _photo(p), child: Avatar(name, url: p['avatar_url'] as String?, radius: 52)),
                     const SizedBox(height: 14),
                     Text(name, textAlign: TextAlign.center, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-                    if ('${p['username'] ?? ''}'.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2), child: Text('@${p['username']}', style: const TextStyle(color: AppColors.muted, fontSize: 14.5))),
+                    if ('${p['username'] ?? ''}'.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2), child: Text('${p['username']}'.replaceFirst(RegExp(r'^@+'), ''), style: const TextStyle(color: AppColors.muted, fontSize: 14.5))),
                     if ('${p['status_label'] ?? ''}'.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('${p['status_label']}', style: TextStyle(color: p['online'] == true ? AppColors.success : AppColors.muted, fontSize: 13.5, fontWeight: p['online'] == true ? FontWeight.w700 : FontWeight.w400))),
                     const SizedBox(height: 10),
                     Wrap(spacing: 8, runSpacing: 6, alignment: WrapAlignment.center, children: [
@@ -126,7 +125,7 @@ class _PersonProfilePageState extends State<PersonProfilePage> {
                   padding: EdgeInsets.zero,
                   child: Column(children: [
                     _row('Email', '${p['email'] ?? ''}', copy: true),
-                    _row('Username', '${p['username'] ?? ''}'.isEmpty ? null : '@${p['username']}'),
+                    _row('Username', '${p['username'] ?? ''}'.isEmpty ? null : '${p['username']}'.replaceFirst(RegExp(r'^@+'), '')),
                     _row('Member since', p['member_since'] as String?),
                     _row('Friends since', p['friend_since'] as String?),
                     _row('Role in your workspace', team?['role'] as String?),

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../core/session.dart';
 import 'package:flutter/services.dart';
 import '../core/api.dart';
 import '../core/inapp_web.dart';
@@ -151,6 +153,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!context.watch<Session>().billingEnabled) return const Scaffold(body: Center(child: Text('All features are free and unlimited.')));
     final title = _result != null ? 'Complete your payment' : 'Checkout';
     return Scaffold(
       appBar: AppBar(title: Text(title)),

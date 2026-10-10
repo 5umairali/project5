@@ -200,7 +200,7 @@ class _WorkflowEditorPageState extends State<WorkflowEditorPage> {
                   const SectionHeader('When this happens (trigger)'),
                   AppCard(child: Column(children: [
                     DropdownButtonFormField<String>(
-                      value: triggers.containsKey(_trigger) ? _trigger : null,
+                      initialValue: triggers.containsKey(_trigger) ? _trigger : null,
                       isExpanded: true,
                       decoration: const InputDecoration(labelText: 'Trigger'),
                       items: [for (final e in triggers.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
@@ -247,7 +247,7 @@ class WorkflowLogsPage extends StatelessWidget {
           itemBuilder: (c, e, _) => ListRow(
             icon: Icons.play_circle_outline,
             title: '${e['contact_name'] ?? 'Run #${e['id']}'}',
-            subtitle: '${fmtDate(e['started_at'])}',
+            subtitle: fmtDate(e['started_at']),
             badge: '${e['status']}',
             onTap: () => pushPage(c, _ExecutionPage(id: e['id'] as int)),
           ),

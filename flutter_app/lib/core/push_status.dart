@@ -9,9 +9,9 @@ class PushConnectionStatus {
   factory PushConnectionStatus.fromRegistration(Map response) {
     final configured = response['push_configured'] == true;
     return PushConnectionStatus(
-      '${response['push_status'] ?? (configured ? 'registered' : 'server_unconfigured')}',
+      '${response['push_status'] ?? (response['push_configured'] is bool ? (configured ? 'registered' : 'server_unconfigured') : 'server_status_unknown')}',
       registered: configured,
-      voipConfigured: response['voip_configured'] == true,
+      voipConfigured: response['voip_configured'] is bool ? response['voip_configured'] as bool : null,
       needsMigration: response['registration_needs_migration'] == true,
     );
   }
@@ -21,6 +21,7 @@ class PushConnectionStatus {
     'checking' => 'Checking this phone’s connection with Firebase…',
     'registered' => 'Registered with the server. Check the connection below, then try a real call while the app is closed.',
     'accepted' => 'Firebase accepted this phone’s registration check. Try a real call or message while using another app to confirm delivery.',
+    'server_status_unknown' => 'This phone was saved, but the website did not report its push configuration. Use Check connection to verify Firebase; the website may need the current mobile API update.',
     'server_unconfigured' => 'The website’s Firebase credentials are missing or invalid. The server administrator must configure background delivery.',
     'project_mismatch' || 'SENDER_ID_MISMATCH' => 'The app and website use different Firebase projects. Install the matching app or update the server’s Firebase configuration.',
     'UNREGISTERED' => 'Firebase no longer recognizes this phone. Use Check connection to register it again.',

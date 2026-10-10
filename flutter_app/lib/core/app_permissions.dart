@@ -13,7 +13,7 @@ import 'theme.dart';
 ///  • notifications (+ calls on the lock screen) : once, right after the first sign-in, with a plain explanation;
 ///  • microphone / camera                       : the first time a call, voice message or photo needs them;
 ///  • contacts                                  : when the person taps "Find friends from my contacts";
-///  • floating call window (over other apps)    : the first time a call is minimised;
+///  • incoming calls over other apps           : after sign-in, before the first background call;
 ///  • battery "keep running" page               : offered once, after the first call, on phones that stop background apps.
 /// Every explanation is shown ONCE per permission; afterwards only the phone's own dialog (or the Settings shortcut) appears.
 class AppPermissions {
@@ -70,17 +70,32 @@ class AppPermissions {
 
   // ───────────── right after the first sign-in ─────────────
 
-  /// Calls this once after sign-in. Safe to call on every start: it only does something the first time.
+  static bool _settingUp = false;
+
+  /// Resume after returning from a system settings page, without stacking dialogs.
   static Future<void> setupAfterSignIn(BuildContext context) async {
+    if (_settingUp || !context.mounted || NotifyService.I.pendingCallAction != null ||
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+    _settingUp = true;
+    try {
+      await _setupAfterSignIn(context);
+    } finally {
+      _settingUp = false;
+    }
+  }
+
+  static Future<void> _setupAfterSignIn(BuildContext context) async {
     final p = await SharedPreferences.getInstance();
     if (p.getBool('perm_setup_v3') == true) {
       // Existing installs may predate the Android 14 full-screen permission request.
-      if (await NotifyService.I.allowed() && context.mounted) await _lockScreenCalls(context);
+      if (await NotifyService.I.allowed() && context.mounted) await _incomingCallAccess(context);
       return;
     }
     if (await NotifyService.I.allowed()) {
       await p.setBool('perm_setup_v3', true);
-      await _lockScreenCalls(context);
+      await _incomingCallAccess(context);
       return;
     }
     if (!context.mounted) return;
@@ -94,20 +109,35 @@ class AppPermissions {
     await p.setBool('perm_setup_v3', true);
     if (yes) {
       await NotifyService.I.requestPermission();
-      if (context.mounted) await _lockScreenCalls(context);
+      if (context.mounted) await _incomingCallAccess(context);
     }
   }
 
-  /// Android 14+: calls can only fill the lock screen when the person allows "full-screen notifications".
-  static Future<void> _lockScreenCalls(BuildContext context) async {
-    if (!Platform.isAndroid) return;
-    try {
-      if (await DeviceEnv.canFullScreenIntent() || await _seen('full_screen_calls')) return;
+  /// Open one system settings page at a time; resume continues the setup.
+  static Future<void> _incomingCallAccess(BuildContext context) async {
+    if (!Platform.isAndroid || !context.mounted ||
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+    if (!await NotifyService.I.allowed()) return;
+    if (!await DeviceEnv.canFullScreenIntent() && !await _seen('full_screen_calls')) {
       if (!context.mounted) return;
       await _mark('full_screen_calls');
-      final yes = await explain(context, icon: Icons.phone_in_talk_rounded, title: 'Show calls on the lock screen', why: 'So an incoming call opens full screen like a normal phone call, also when the phone is locked. The next screen is a phone setting – switch it on for this app.', yes: 'Open setting');
-      if (yes) await DeviceEnv.openFullScreenIntentSettings();
-    } catch (_) {}
+      final yes = await explain(context, icon: Icons.phone_in_talk_rounded, title: 'Show calls on the lock screen', why: 'Allow full-screen notifications so incoming calls can open when your phone is locked or the screen is off.', yes: 'Open setting');
+      if (yes) {
+        await DeviceEnv.openFullScreenIntentSettings();
+        return;
+      }
+    }
+    if (await NativeCalls.canDraw() || await _seen('incoming_overlay')) return;
+    if (!context.mounted || WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+    await _mark('incoming_overlay');
+    final yes = await explain(context, icon: Icons.phone_in_talk_rounded, title: 'Show calls over other apps', why: 'Allow "Display over other apps" to see the incoming call screen while using another app. Without it, Android may show only a call notification.', yes: 'Open setting');
+    // Share the decision with the in-call floating-window explanation.
+    await _mark('overlay');
+    if (yes) await NativeCalls.requestDraw();
   }
 
   // ───────────── floating call window ─────────────

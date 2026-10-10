@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../screens/app_settings_screens.dart';
 import '../screens/campaign_screens.dart';
 import '../screens/contacts_screens.dart';
 import '../screens/deals_screens.dart';
@@ -11,7 +10,6 @@ import '../screens/settings_workspace.dart';
 import '../screens/people_screens.dart';
 import '../screens/tools_screens.dart';
 import '../screens/workflow_screens.dart';
-import 'util.dart';
 
 /// The four bottom tabs.  Mail · Chats · People · Workspace
 enum ShellMode { inbox, social, people, workspace }

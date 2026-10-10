@@ -13,7 +13,17 @@
         'tls' => config('services.realtime.ws_scheme', 'https') === 'https', 'auth' => url('/broadcasting/auth'),
     ]) }}">
     @endauth
-    @vite('resources/js/realtime.js')
+    @php
+        // Polling in meeting.js remains available during an incomplete asset deployment.
+        // A missing optional websocket bundle must not make the call room return HTTP 500.
+        $realtimeAssets = '';
+        try {
+            $realtimeAssets = app(\Illuminate\Foundation\Vite::class)('resources/js/realtime.js');
+        } catch (\Illuminate\Foundation\ViteException $error) {
+            \Illuminate\Support\Facades\Log::warning('Meeting realtime assets unavailable; rebuild website assets with npm ci && npm run build.', ['exception' => get_class($error)]);
+        }
+    @endphp
+    {!! $realtimeAssets !!}
     <title>{{ $meeting['title'] }} · {{ config('app.name') }}</title>
     <style>
         :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --ink:#f2f4f8; --muted:#9aa3b2; --brand:#4F46E5; --red:#dc2626; --green:#16a34a; }
@@ -124,6 +134,6 @@
     <div id="mt-toasts"></div>
 </div>
 <script src="{{ asset('js/call-recorder.js') }}?v=20261007"></script>
-<script src="{{ asset('js/meeting.js') }}?v=20261007"></script>
+<script src="{{ asset('js/meeting.js') }}?v=20261010-streams"></script>
 </body>
 </html>

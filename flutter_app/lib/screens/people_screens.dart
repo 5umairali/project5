@@ -196,7 +196,7 @@ class _PeoplePageState extends State<PeoplePage> {
               'friends' => const FriendsPage(),
               'customers' => const ContactsPage(),
               'team' => list([for (final t in team) {...t, 'is_team': true, 'can_talk': true}], 'No teammates in this workspace yet.\nInvite them from Workspace → Team.'),
-              _ => list(everyone, 'Nobody here yet.\nUse \"Add a friend\" above to find people, or invite teammates from Workspace → Team.'),
+              _ => list(everyone, 'Nobody here yet.\nUse "Add a friend" above to find people, or invite teammates from Workspace → Team.'),
             },
           ),
         ]);

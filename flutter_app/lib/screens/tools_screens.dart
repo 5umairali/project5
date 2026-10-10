@@ -152,7 +152,7 @@ class InsightsSection extends StatefulWidget {
 
 class _InsightsSectionState extends State<InsightsSection> {
   final _hidden = <String>{};
-  int _v = 0;
+  final int _v = 0;
 
   static (IconData, Color) _look(String priority) => switch (priority) {
         'urgent' => (Icons.priority_high_rounded, AppColors.danger),

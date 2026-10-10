@@ -73,7 +73,19 @@ class MeetingController extends Controller
         $m = $this->svc->find($code);
         abort_unless($m && $m->status !== 'cancelled', 404);
         $u = $r->user();
+        // A source-only deployment may still have the previous Vite manifest.
+        // Realtime accelerates the room's existing REST polling; missing assets
+        // must not prevent the call screen itself from loading.
+        $realtimeAssets = '';
+        try {
+            $realtimeAssets = app(\Illuminate\Foundation\Vite::class)(['resources/js/realtime.js']);
+        } catch (\Illuminate\Foundation\ViteException $e) {
+            \Illuminate\Support\Facades\Log::warning('Call room realtime assets unavailable; rebuild and deploy public/build. Polling remains enabled.', [
+                'exception' => get_class($e),
+            ]);
+        }
         return view('meetings.room', [
+            'realtimeAssets' => $realtimeAssets,
             'meeting' => $this->svc->info($m), 'ended' => $m->status === 'ended', 'allowGuests' => (bool) $m->allow_guests,
             'user' => $u ? ['id' => $u->id, 'name' => $u->name] : null,
         ]);
