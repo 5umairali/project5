@@ -9,9 +9,14 @@ class RemoteMedia {
   MediaStream? stream;
   Future<void> _work = Future.value();
   bool _closed = false;
-  bool get hasVideo => stream?.getVideoTracks().isNotEmpty ?? false;
+  bool _receivedVideoTrack = false;
+  // Rendering should not depend on the asynchronous aggregate stream being
+  // created successfully. Unified Plan can deliver the video track before the
+  // stream (or without an associated stream at all).
+  bool get hasVideo => _receivedVideoTrack || (stream?.getVideoTracks().isNotEmpty ?? false);
 
   Future<void> add(MediaStreamTrack track, void Function(MediaStream) changed) {
+    if (track.kind == 'video') _receivedVideoTrack = true;
     _work = _work.catchError((_) {}).then((_) async {
       if (_closed) return;
       final target = stream ??= await _create();
@@ -26,6 +31,7 @@ class RemoteMedia {
 
   Future<void> dispose() async {
     _closed = true;
+    _receivedVideoTrack = false;
     await _work.catchError((_) {});
     await stream?.dispose();
     stream = null;

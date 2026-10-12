@@ -20,6 +20,7 @@ import 'notify.dart';
 import 'notification_tile.dart';
 import 'prefs.dart';
 import 'room_host.dart';
+import 'rtc_diagnostics.dart';
 import 'session.dart';
 import 'sounds.dart';
 import 'refresh.dart';
@@ -49,7 +50,8 @@ class CallSession extends ChangeNotifier {
   RTCPeerConnection? _pc;
   MediaStream? _local;
   int _last = 0;
-  Timer? _sig, _clock;
+  Timer? _sig, _clock, _statsTimer;
+  bool _statsBusy = false;
   bool _remoteSet = false, _pulling = false, _closed = false;
   final _queue = <RTCIceCandidate>[];
 
@@ -72,14 +74,41 @@ class CallSession extends ChangeNotifier {
     }
     try {
       _local = await navigator.mediaDevices.getUserMedia({'audio': true, 'video': false});
+      debugPrint('[RTC-DIAG][call] local audio tracks=${_local!.getAudioTracks().length} enabled=${_local!.getAudioTracks().map((t) => t.enabled).toList()}');
       _pc = await createPeerConnection({'iceServers': call['ice_servers'] ?? [], 'sdpSemantics': 'unified-plan'});
-      for (final t in _local!.getAudioTracks()) {
-        await _pc!.addTrack(t, _local!);
+      final audioTracks = _local!.getAudioTracks();
+      // Only the caller (who sends the offer) adds its transceivers up front. A transceiver made with addTransceiver()
+      // is not reused for an incoming offer, so the callee attaches its microphone after setRemoteDescription instead.
+      if (outgoing) {
+        for (final t in audioTracks) {
+          final transceiver = await _pc!.addTransceiver(
+            track: t,
+            init: RTCRtpTransceiverInit(
+              direction: TransceiverDirection.SendRecv,
+              streams: [_local!],
+            ),
+          );
+          debugPrint('[RTC-DIAG][call] local audio direction=${await transceiver.getDirection()}');
+        }
+        if (audioTracks.isEmpty) {
+          await _pc!.addTransceiver(
+            kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
+            init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+          );
+          debugPrint('[RTC-DIAG][call] added receive-only audio transceiver');
+        }
       }
+      _pc!.onTrack = (RTCTrackEvent e) {
+        debugPrint('[RTC-DIAG][call] remote track kind=${e.track.kind} enabled=${e.track.enabled} streams=${e.streams.length}');
+      };
       _pc!.onIceCandidate = (RTCIceCandidate c) {
         if (c.candidate != null) _post('ice', {'candidate': c.candidate, 'sdpMid': c.sdpMid, 'sdpMLineIndex': c.sdpMLineIndex});
       };
+      _pc!.onIceConnectionState = (RTCIceConnectionState state) {
+        debugPrint('[RTC-DIAG][call] ICE=$state');
+      };
       _pc!.onConnectionState = (RTCPeerConnectionState s) {
+        debugPrint('[RTC-DIAG][call] peer=$s');
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateConnected) _connected();
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateFailed) _finish('Connection lost', tellServer: true);
       };
@@ -94,10 +123,23 @@ class CallSession extends ChangeNotifier {
     if (_clock != null) return;
     _set('connected');
     AndroidCallKit.connected();
+    unawaited(_logAudioStats());
+    _statsTimer = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_logAudioStats()));
     _clock = Timer.periodic(const Duration(seconds: 1), (_) {
       seconds++;
       notifyListeners();
     });
+  }
+
+  Future<void> _logAudioStats() async {
+    final pc = _pc;
+    if (pc == null || _closed || _statsBusy) return;
+    _statsBusy = true;
+    try {
+      await logRtcAudioStats(pc, 'call');
+    } finally {
+      _statsBusy = false;
+    }
   }
 
   /// Caller: create the offer and wait for the answer.
@@ -105,6 +147,7 @@ class CallSession extends ChangeNotifier {
     if (!await _prepare()) return;
     try {
       final offer = await _pc!.createOffer({'offerToReceiveAudio': 1});
+      debugPrint('[RTC-DIAG][call] offer hasAudio=${offer.sdp?.contains('m=audio') ?? false}');
       await _pc!.setLocalDescription(offer);
       await _post('offer', {'type': offer.type, 'sdp': offer.sdp});
       _loop();
@@ -189,8 +232,16 @@ class CallSession extends ChangeNotifier {
       if (type == 'offer') {
         await pc.setRemoteDescription(RTCSessionDescription(d['sdp'] as String?, d['type'] as String?));
         _remoteSet = true;
+        // callee: send the microphone on the transceiver the offer created (addTrack reuses it and makes it sendrecv)
+        final local = _local;
+        if (local != null) {
+          for (final t in local.getAudioTracks()) {
+            try { await pc.addTrack(t, local); } catch (_) {}
+          }
+        }
         await _flush();
         final answer = await pc.createAnswer({'offerToReceiveAudio': 1});
+        debugPrint('[RTC-DIAG][call] answer hasAudio=${answer.sdp?.contains('m=audio') ?? false}');
         await pc.setLocalDescription(answer);
         await _post('answer', {'type': answer.type, 'sdp': answer.sdp});
       } else if (type == 'answer') {
@@ -238,6 +289,7 @@ class CallSession extends ChangeNotifier {
     _closed = true;
     _sig?.cancel();
     _clock?.cancel();
+    _statsTimer?.cancel();
     _realtime?.cancel();
     _set('ended', reason: reason);
     CallManager.I._ended(this);

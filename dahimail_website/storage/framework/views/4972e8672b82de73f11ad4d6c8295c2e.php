@@ -77,6 +77,7 @@
         .dot { position:absolute; top:.2rem; right:.5rem; background:var(--red); border-radius:1rem; min-width:1.1rem; height:1.1rem; font-size:.65rem; display:flex; align-items:center; justify-content:center; padding:0 .25rem; }
         #mt-toasts { position:fixed; top:4rem; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; gap:.4rem; z-index:50; pointer-events:none; } .mt-toast { background:#000c; border:1px solid var(--line); padding:.5rem .9rem; border-radius:.8rem; font-size:.85rem; }
         .mt-menu { position:fixed; z-index:60; background:var(--panel); border:1px solid var(--line); border-radius:.9rem; padding:.3rem; min-width:15rem; box-shadow:0 10px 30px #0008; } .mt-menu button { display:block; width:100%; text-align:left; background:none; border:0; padding:.7rem .9rem; border-radius:.6rem; } .mt-menu button:hover { background:#232834; } .mt-menu .bad { color:#f87171; }
+        .mt-remote-audio { position:fixed; width:1px; height:1px; opacity:0; pointer-events:none; }
     </style>
 </head>
 <body>
@@ -113,7 +114,7 @@
     
     <section id="mt-room" class="hidden">
         <header id="mt-top">
-            <div class="t" id="mt-title"></div><span id="mt-lock" class="hidden" title="<?php echo e(__('Locked')); ?>">🔒</span>
+            <div class="t" id="mt-title"></div><span id="mt-lock" class="hidden" title="<?php echo e(__('Locked')); ?>">🔒</span><button id="mt-enable-audio" class="lnk hidden" type="button"><?php echo e(__('Enable call audio')); ?></button>
             <div class="i"><span id="mt-count"></span><span id="mt-left"></span><span id="mt-clock">0:00</span><button id="mt-add" class="lnk hidden" type="button"><?php echo e(__('Add people')); ?></button><button id="mt-share" class="lnk" type="button"><?php echo e(__('Share')); ?></button><button id="mt-copy" class="lnk" type="button"><?php echo e(__('Copy link')); ?></button></div>
         </header>
         <div id="mt-main">
@@ -135,7 +136,7 @@
     <div id="mt-toasts"></div>
 </div>
 <script src="<?php echo e(asset('js/call-recorder.js')); ?>?v=20261007"></script>
-<script src="<?php echo e(asset('js/meeting.js')); ?>?v=20261010-streams"></script>
+<script src="<?php echo e(asset('js/meeting.js')); ?>?v=20261011-audio"></script>
 </body>
 </html>
 <?php /**PATH /home/dahimail.com/public_html/resources/views/meetings/room.blade.php ENDPATH**/ ?>

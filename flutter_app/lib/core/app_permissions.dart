@@ -66,6 +66,31 @@ class AppPermissions {
 
   static Future<bool> microphone({BuildContext? context}) => ask(Permission.microphone, key: 'mic', icon: Icons.mic_rounded, title: 'Allow the microphone', why: 'Needed so the other person can hear you in calls and voice messages. It is only used while a call or recording is running.', context: context);
   static Future<bool> camera({BuildContext? context}) => ask(Permission.camera, key: 'cam', icon: Icons.videocam_rounded, title: 'Allow the camera', why: 'Needed for video calls and to take photos. It is only used when you switch the camera on or take a picture.', context: context);
+  /// Optional on Android 12+: flutter_webrtc needs this runtime grant to inspect/use Bluetooth call devices.
+  /// A denial must not block the call; Android can still use the built-in speaker/earpiece.
+  static Future<void> bluetoothForCalls({BuildContext? context}) async {
+    if (!Platform.isAndroid) return;
+    try {
+      final status = await Permission.bluetoothConnect.status;
+      if (!status.isDenied) return; // already granted, restricted, or deliberately blocked
+      const key = 'bluetooth_call';
+      if (!await _seen(key)) {
+        await _mark(key);
+        final proceed = await explain(
+          context,
+          icon: Icons.bluetooth_audio_rounded,
+          title: 'Use Bluetooth audio in calls',
+          why: 'Allow nearby-device access to route call audio to a Bluetooth headset. If you decline, calls can still use your phone speaker or earpiece.',
+          yes: 'Continue',
+          no: 'Use phone audio',
+        );
+        if (!proceed) return;
+      }
+      await Permission.bluetoothConnect.request();
+    } catch (_) {
+      // Headset routing is optional; never prevent a call from using its built-in audio devices.
+    }
+  }
   static Future<bool> contacts({BuildContext? context}) => ask(Permission.contacts, key: 'contacts', icon: Icons.contacts_rounded, title: 'Find friends in your contacts', why: 'Phone numbers in your contacts are compared with ${AppConfig.appName} members to suggest friends. Names are never read or sent, and nothing is stored.', context: context);
 
   // ───────────── right after the first sign-in ─────────────

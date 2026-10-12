@@ -25,7 +25,9 @@ void main() {
     final bound = <MediaStream>[];
     await media.add(Track('audio', 'audio'), bound.add);
     expect(media.hasVideo, false);
-    await Future.wait([media.add(Track('video', 'video'), bound.add), media.add(Track('video', 'video'), bound.add)]);
+    final firstVideo = media.add(Track('video', 'video'), bound.add);
+    expect(media.hasVideo, true, reason: 'video availability must not wait for native stream assembly');
+    await Future.wait([firstVideo, media.add(Track('video', 'video'), bound.add)]);
     expect(media.hasVideo, true);
     expect(stream.tracks.map((t) => t.id), ['audio', 'video']);
     expect(bound, everyElement(same(stream)));

@@ -168,6 +168,7 @@
   }
   function doJoin() {
     if (finishing) return;
+    resumeAudioContext(); // execute while the Join click still carries user activation
     var name = USER ? USER.name : $('mt-name').value.trim();
     if (!USER && !name) { $('mt-pre-msg').textContent = 'Type your name to join.'; $('mt-name').focus(); return; }
     $('mt-join').disabled = true; $('mt-pre-msg').textContent = 'Joining…';
@@ -320,21 +321,44 @@
   }
 
   // ───────── connections (one per other person) ─────────
-  function makePeer(pid) {
+  /**
+   * answering=false: we are about to send the offer, so our tracks are added as transceivers up front.
+   * answering=true : the other side offers. Transceivers made with addTransceiver() are NOT reused for an incoming
+   * offer (only addTrack() ones are), so adding them here would leave our microphone out of the answer and the other
+   * person would hear nothing. In that case our tracks are attached AFTER setRemoteDescription (see attachLocal).
+   */
+  function makePeer(pid, answering) {
     var pc = new RTCPeerConnection({ iceServers: S.ice });
-    var peer = { pid: pid, pc: pc, stream: new MediaStream(), queue: [], remoteSet: false, aSender: null, vSender: null };
+    var peer = { pid: pid, pc: pc, stream: new MediaStream(), queue: [], remoteSet: false, aSender: null, vSender: null, answering: !!answering };
     S.peers[pid] = peer;
-    // Keep stable msid associations for native receivers, including tracks
-    // enabled later with replaceTrack (camera and screen sharing).
-    var outgoing = S.local || (S.local = new MediaStream());
-    var a = pc.addTransceiver(S.audioTrack || 'audio', { direction: 'sendrecv', streams: [outgoing] });
-    var v = pc.addTransceiver(currentVideo() || 'video', { direction: 'sendrecv', streams: [outgoing] });
-    peer.aSender = a.sender; peer.vSender = v.sender;
+    if (!answering) {
+      var outgoing = S.local || (S.local = new MediaStream());
+      var a = pc.addTransceiver(S.audioTrack || 'audio', { direction: 'sendrecv', streams: [outgoing] });
+      var v = pc.addTransceiver(currentVideo() || 'video', { direction: 'sendrecv', streams: [outgoing] });
+      peer.aSender = a.sender; peer.vSender = v.sender;
+    }
     pc.ontrack = function (e) { if (peer.stream.getTracks().indexOf(e.track) < 0) peer.stream.addTrack(e.track); renderTiles(); watchLevel(pid, peer.stream); if (window.DahiRec) window.DahiRec.addRemote(peer.stream); };
     pc.onicecandidate = function (e) { if (e.candidate) sendSignal(pid, 'ice', JSON.stringify(e.candidate)); };
     pc.onconnectionstatechange = function () { if (pc.connectionState === 'failed') { try { if (pc.restartIce) pc.restartIce(); } catch (x) {} } };
     limitBitrate(peer);
     return peer;
+  }
+  /** Answering side: after setRemoteDescription, put our microphone / camera on the transceivers the offer created. */
+  function attachLocal(peer) {
+    var outgoing = S.local || (S.local = new MediaStream()), seen = {}, work = [];
+    peer.pc.getTransceivers().forEach(function (t) {
+      var kind = t.receiver && t.receiver.track ? t.receiver.track.kind : null;
+      if (!kind || seen[kind] || t.currentDirection === 'stopped') return;
+      seen[kind] = true;
+      var track = kind === 'audio' ? S.audioTrack : currentVideo();
+      try { t.direction = 'sendrecv'; } catch (e) {}
+      if (kind === 'audio') peer.aSender = t.sender; else peer.vSender = t.sender;
+      if (track) {
+        work.push(t.sender.replaceTrack(track).catch(noop));
+        try { if (t.sender.setStreams) t.sender.setStreams(outgoing); } catch (e) {}
+      }
+    });
+    return Promise.all(work).then(function () { limitBitrate(peer); });
   }
   function limitBitrate(peer) { // every extra person means one more video stream to upload: keep each one modest
     try {
@@ -362,9 +386,9 @@
     var peer = S.peers[pid];
     if (sg.type === 'offer') {
       if (peer) closePeer(pid, true);          // a fresh offer: start clean
-      peer = makePeer(pid);
+      peer = makePeer(pid, true);
       peer.queue = (S.early[pid] || []).slice(); delete S.early[pid]; // candidates that reached the server before their offer
-      return peer.pc.setRemoteDescription(data).then(function () { peer.remoteSet = true; return flush(peer); })
+      return peer.pc.setRemoteDescription(data).then(function () { peer.remoteSet = true; return attachLocal(peer); }).then(function () { return flush(peer); })
         .then(function () { return peer.pc.createAnswer(); }).then(function (a) { return peer.pc.setLocalDescription(a); })
         .then(function () { return sendSignal(pid, 'answer', JSON.stringify(peer.pc.localDescription)); });
     }
@@ -393,10 +417,24 @@
       if (S.levels[pid] || !stream.getAudioTracks().length) return;
       var C = window.AudioContext || window.webkitAudioContext; if (!C) return;
       S.audioCtx = S.audioCtx || new C();
+      resumeAudioContext();
       var an = S.audioCtx.createAnalyser(); an.fftSize = 256; S.audioCtx.createMediaStreamSource(stream).connect(an);
       S.levels[pid] = { an: an, buf: new Uint8Array(an.fftSize) };
       if (!S.levelTimer) S.levelTimer = setInterval(speaking, 300);
     } catch (e) {}
+  }
+  // Browsers may suspend Web Audio contexts created after an async join or
+  // remote-track event. Resume on a user gesture so speaking borders can react.
+  function resumeAudioContext() {
+    if (!S.audioCtx) {
+      var C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return Promise.resolve();
+      try { S.audioCtx = new C(); } catch (e) { return Promise.resolve(); }
+    }
+    if (S.audioCtx.state !== 'running' && typeof S.audioCtx.resume === 'function') {
+      try { return S.audioCtx.resume().catch(noop); } catch (e) {}
+    }
+    return Promise.resolve();
   }
   function speaking() {
     Object.keys(S.levels).forEach(function (k) {
@@ -521,6 +559,8 @@
   }
 
   function bind() {
+    document.addEventListener('click', resumeAudioContext, true);
+    document.addEventListener('keydown', resumeAudioContext, true);
     $('mt-b-mic').onclick = function () { setMic(!S.micOn); };
     $('mt-b-cam').onclick = function () { setCam(!S.camOn); };
     $('mt-b-share').onclick = toggleShare;

@@ -6,6 +6,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'api.dart';
 import 'remote_media.dart';
 import 'realtime.dart';
+import 'rtc_diagnostics.dart';
 import 'meeting_recording.dart';
 import 'app_permissions.dart';
 
@@ -17,6 +18,10 @@ class MeetingPeer {
   RTCPeerConnection? pc;
   final RTCVideoRenderer renderer = RTCVideoRenderer();
   bool rendererReady = false, remoteSet = false, hasStream = false;
+  /// true when this side sends the offer (its tracks are added up front); false when it answers (tracks attach after the offer).
+  bool offerer = false;
+  Timer? statsTimer;
+  bool statsBusy = false;
   final remoteMedia = RemoteMedia();
   bool get hasVideo => remoteMedia.hasVideo;
   final queue = <RTCIceCandidate>[];
@@ -401,15 +406,16 @@ class MeetingEngine extends ChangeNotifier {
     for (final id in ids) {
       if (_closed) return;
       if (!peers.containsKey(id)) {
-        await _makePeer(id);
-        if (pid > id) await _offer(id); // the person with the higher id always makes the offer, so two people never offer at once
+        final offering = pid > id; // the person with the higher id always makes the offer, so two people never offer at once
+        await _makePeer(id, offerer: offering);
+        if (offering) await _offer(id);
       }
     }
   }
 
-  Future<MeetingPeer?> _makePeer(int id) async {
+  Future<MeetingPeer?> _makePeer(int id, {required bool offerer}) async {
     if (_closed) return null;
-    final p = MeetingPeer(id);
+    final p = MeetingPeer(id)..offerer = offerer;
     peers[id] = p;
     try {
       await p.renderer.initialize();
@@ -418,30 +424,82 @@ class MeetingEngine extends ChangeNotifier {
       final pc = await createPeerConnection({'iceServers': _ice, 'sdpSemantics': 'unified-plan'});
       if (_closed || peers[id] != p) { await pc.close(); return null; }
       p.pc = pc;
-      for (final t in _local?.getTracks() ?? const <MediaStreamTrack>[]) {
-        await pc.addTrack(t, _local!);
+      // Only the side that SENDS the offer adds its tracks up front. A transceiver made with addTransceiver() is not
+      // reused for an incoming offer (only addTrack() ones are), so on the answering side a pre-added microphone is
+      // left out of the answer and the other person hears nothing. The answering side attaches its tracks right
+      // after setRemoteDescription (see _attachLocal).
+      if (offerer) {
+        final localAudio = _local?.getAudioTracks() ?? const <MediaStreamTrack>[];
+        final localVideo = _local?.getVideoTracks() ?? const <MediaStreamTrack>[];
+        for (final t in localAudio) {
+          final transceiver = await pc.addTransceiver(
+            track: t,
+            init: RTCRtpTransceiverInit(
+              direction: TransceiverDirection.SendRecv,
+              streams: [_local!],
+            ),
+          );
+          debugPrint('[RTC-DIAG][meeting peer $id] local audio direction=${await transceiver.getDirection()}');
+        }
+        for (final t in localVideo) {
+          final transceiver = await pc.addTransceiver(
+            track: t,
+            init: RTCRtpTransceiverInit(
+              direction: TransceiverDirection.SendRecv,
+              streams: [_local!],
+            ),
+          );
+          debugPrint('[RTC-DIAG][meeting peer $id] local video direction=${await transceiver.getDirection()}');
+        }
+        // Explicitly create a receiver for media this participant does not send.
+        // Local sender transceivers above are explicitly SendRecv so this side
+        // also advertises that it can receive the peer's media.
+        if (localAudio.isEmpty) {
+          await pc.addTransceiver(
+            kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
+            init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+          );
+          debugPrint('[RTC-DIAG][meeting peer $id] added receive-only audio transceiver');
+        }
+        if (localVideo.isEmpty) {
+          await pc.addTransceiver(
+            kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+            init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+          );
+          debugPrint('[RTC-DIAG][meeting peer $id] added receive-only video transceiver');
+        }
       }
+      debugPrint('[RTC-DIAG][meeting peer $id] local audio=${_local?.getAudioTracks().length ?? 0} video=${_local?.getVideoTracks().length ?? 0} audioEnabled=${_local?.getAudioTracks().map((t) => t.enabled).toList()}');
       pc.onIceCandidate = (RTCIceCandidate c) {
         if (c.candidate != null) _send(id, 'ice', {'candidate': c.candidate, 'sdpMid': c.sdpMid, 'sdpMLineIndex': c.sdpMLineIndex});
       };
+      pc.onIceConnectionState = (RTCIceConnectionState state) {
+        debugPrint('[RTC-DIAG][meeting peer $id] ICE=$state');
+      };
       pc.onTrack = (RTCTrackEvent e) {
-        // Prefer the negotiated stream supplied by the native WebRTC layer.
-        // Rebinding only a synthetic stream can hide the remote video track
-        // on some Android/iOS Unified Plan implementations.
-        final supplied = e.streams.isNotEmpty ? e.streams.first : null;
-        if (supplied != null) {
-          p.renderer.srcObject = supplied;
-          p.hasStream = true;
-          notifyListeners();
-        }
-        unawaited(p.remoteMedia.add(e.track, (stream) {
+        debugPrint('[RTC-DIAG][meeting peer $id] remote track kind=${e.track.kind} enabled=${e.track.enabled} streams=${e.streams.length}');
+        // Keep the received tracks in a local aggregate stream. In the locked
+        // flutter_webrtc mobile plugin, Unified Plan onTrack streams are
+        // reported to Dart but are not registered in the native renderer's
+        // remote-stream lookup; assigning e.streams.first can therefore leave
+        // the native video source null. The aggregate stream is app-owned and
+        // registered by createLocalMediaStream, so RTCVideoRenderer can resolve
+        // it on both Android and iOS.
+        final mediaWork = p.remoteMedia.add(e.track, (stream) {
           if (_closed || peers[id] != p || !p.rendererReady) return;
-          if (p.renderer.srcObject == null || supplied == null) p.renderer.srcObject = stream;
+          p.renderer.srcObject = stream;
           p.hasStream = true;
           notifyListeners();
-        }).catchError((_) {}));
+        });
+        // `RemoteMedia.add` records the track synchronously, while its stream
+        // wrapper may need an async native allocation. Refresh now so the tile
+        // does not remain on the avatar while that allocation is pending.
+        if (e.track.kind == 'video') notifyListeners();
+        unawaited(mediaWork.catchError((_) {}));
       };
       pc.onConnectionState = (RTCPeerConnectionState s) {
+        debugPrint('[RTC-DIAG][meeting peer $id] peer=$s');
+        if (s == RTCPeerConnectionState.RTCPeerConnectionStateConnected) _startPeerStats(p, pc);
         if (s == RTCPeerConnectionState.RTCPeerConnectionStateFailed && peers[id] == p && !_closed) {
           _dropPeer(id).then((_) => notifyListeners()); // the next poll builds a fresh connection
         }
@@ -453,9 +511,29 @@ class MeetingEngine extends ChangeNotifier {
     }
   }
 
+  void _startPeerStats(MeetingPeer peer, RTCPeerConnection pc) {
+    if (peer.statsTimer != null) return;
+    unawaited(_logPeerAudioStats(peer, pc));
+    peer.statsTimer = Timer.periodic(
+      const Duration(seconds: 5),
+          (_) => unawaited(_logPeerAudioStats(peer, pc)),
+    );
+  }
+
+  Future<void> _logPeerAudioStats(MeetingPeer peer, RTCPeerConnection pc) async {
+    if (_closed || peers[peer.pid] != peer || peer.statsBusy) return;
+    peer.statsBusy = true;
+    try {
+      await logRtcAudioStats(pc, 'meeting peer ${peer.pid}');
+    } finally {
+      peer.statsBusy = false;
+    }
+  }
+
   Future<void> _dropPeer(int id) async {
     final p = peers.remove(id);
     if (p == null) return;
+    p.statsTimer?.cancel();
     final ready = p.rendererReady;
     p.rendererReady = false;
     p.hasStream = false;
@@ -480,6 +558,7 @@ class MeetingEngine extends ChangeNotifier {
     if (pc == null) return;
     try {
       final o = await pc.createOffer({'offerToReceiveAudio': 1, 'offerToReceiveVideo': 1});
+      debugPrint('[RTC-DIAG][meeting peer $id] offer hasAudio=${o.sdp?.contains('m=audio') ?? false} hasVideo=${o.sdp?.contains('m=video') ?? false}');
       await pc.setLocalDescription(o);
       await _send(id, 'offer', {'type': o.type, 'sdp': o.sdp});
     } catch (_) {}
@@ -495,14 +574,16 @@ class MeetingEngine extends ChangeNotifier {
     try {
       if (type == 'offer') {
         // a fresh offer replaces an old connection (the other person reconnected)
-        if (peers.containsKey(from) && peers[from]!.remoteSet) await _dropPeer(from);
-        final p = peers[from] ?? await _makePeer(from);
+        if (peers.containsKey(from) && (peers[from]!.remoteSet || peers[from]!.offerer)) await _dropPeer(from);
+        final p = peers[from] ?? await _makePeer(from, offerer: false);
         final pc = p?.pc;
         if (p == null || pc == null) return;
         await pc.setRemoteDescription(RTCSessionDescription(d['sdp'] as String?, d['type'] as String?));
         p.remoteSet = true;
+        await _attachLocal(p); // answering side: our microphone / camera go on the transceivers the offer created
         await _flush(p);
         final a = await pc.createAnswer({'offerToReceiveAudio': 1, 'offerToReceiveVideo': 1});
+        debugPrint('[RTC-DIAG][meeting peer $from] answer hasAudio=${a.sdp?.contains('m=audio') ?? false} hasVideo=${a.sdp?.contains('m=video') ?? false}');
         await pc.setLocalDescription(a);
         await _send(from, 'answer', {'type': a.type, 'sdp': a.sdp});
       } else if (type == 'answer') {
@@ -512,7 +593,7 @@ class MeetingEngine extends ChangeNotifier {
         p.remoteSet = true;
         await _flush(p);
       } else if (type == 'ice') {
-        final p = peers[from] ?? await _makePeer(from); // candidates can arrive before the offer: keep them
+        final p = peers[from] ?? await _makePeer(from, offerer: false); // candidates can arrive before the offer: keep them
         if (p == null) return;
         final c = RTCIceCandidate(d['candidate'] as String?, d['sdpMid'] as String?, (d['sdpMLineIndex'] as num?)?.toInt());
         if (p.remoteSet && p.pc != null) {
@@ -522,6 +603,22 @@ class MeetingEngine extends ChangeNotifier {
         }
       }
     } catch (_) {}
+  }
+
+  /// Answering side: after the remote offer is applied, send our microphone / camera on the transceivers it created.
+  /// (addTrack reuses an offered transceiver and turns it into sendrecv, so the answer carries our audio.)
+  Future<void> _attachLocal(MeetingPeer p) async {
+    final pc = p.pc;
+    final local = _local;
+    if (pc == null || local == null || p.offerer) return;
+    for (final t in [...local.getAudioTracks(), ...local.getVideoTracks()]) {
+      try {
+        await pc.addTrack(t, local);
+        debugPrint('[RTC-DIAG][meeting peer ${p.pid}] answer: attached local ${t.kind} track');
+      } catch (e) {
+        debugPrint('[RTC-DIAG][meeting peer ${p.pid}] answer: could not attach ${t.kind}: ${e.runtimeType}');
+      }
+    }
   }
 
   Future<void> _flush(MeetingPeer p) async {
@@ -566,7 +663,7 @@ class MeetingEngine extends ChangeNotifier {
       notifyListeners();
       for (final id in peers.keys.toList()) {
         await _dropPeer(id);
-        await _makePeer(id);
+        await _makePeer(id, offerer: true);
         await _offer(id); // the other side accepts an offer from an existing peer as a fresh start
       }
       _state({'video': true});
